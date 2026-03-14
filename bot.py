@@ -54,7 +54,8 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         "/remember <text> — save a note to memory\n"
         "/memory — show what I remember\n"
         "/forget — wipe memory (backs up first)\n"
-        "/model <slug> — switch LLM model\n\n"
+        "/model <slug> — switch LLM model\n"
+        "/cheap — use 3.1 flash lite (cheaper)\n\n"
         f"Current model: `{session['model']}`",
         parse_mode="Markdown",
     )
@@ -127,6 +128,17 @@ async def cmd_model(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+CHEAP_MODEL = "google/gemini-3.1-flash-lite-preview"
+
+
+async def cmd_cheap(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    session["model"] = CHEAP_MODEL
+    await update.message.reply_text(
+        f"Switched to cheap model: `{CHEAP_MODEL}`",
+        parse_mode="Markdown",
+    )
+
+
 async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     user_text = update.message.text
     if not user_text:
@@ -182,6 +194,7 @@ def main() -> None:
     app.add_handler(CommandHandler("memory", cmd_memory))
     app.add_handler(CommandHandler("forget", cmd_forget))
     app.add_handler(CommandHandler("model", cmd_model))
+    app.add_handler(CommandHandler("cheap", cmd_cheap))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     log.info("Bot starting with agent=%s model=%s", AGENT.name, AGENT.default_model)
