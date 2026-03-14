@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from telegram import Update
+from telegram import BotCommand, Update
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -195,6 +195,23 @@ async def _background_extract(user_text: str, assistant_reply: str) -> None:
         log.exception("Memory extraction failed (non-fatal)")
 
 
+BOT_COMMANDS = [
+    BotCommand("start", "See greeting and commands"),
+    BotCommand("new", "Start fresh conversation [model]"),
+    BotCommand("search", "Toggle web search (on|off)"),
+    BotCommand("remember", "Save a note to memory"),
+    BotCommand("memory", "Show what I remember"),
+    BotCommand("forget", "Wipe memory (backs up first)"),
+    BotCommand("summarize", "Condense memory (backs up first)"),
+    BotCommand("model", "Switch LLM model"),
+    BotCommand("cheap", "Use 3.1 flash lite (cheaper)"),
+]
+
+
+async def _set_commands(application) -> None:
+    await application.bot.set_my_commands(BOT_COMMANDS)
+
+
 def main() -> None:
     app = ApplicationBuilder().token(config.TELEGRAM_BOT_TOKEN).build()
 
@@ -208,6 +225,8 @@ def main() -> None:
     app.add_handler(CommandHandler("model", cmd_model))
     app.add_handler(CommandHandler("cheap", cmd_cheap))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+    app.post_init = _set_commands
 
     log.info("Bot starting with agent=%s model=%s", AGENT.name, AGENT.default_model)
     app.run_polling()
