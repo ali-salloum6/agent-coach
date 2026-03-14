@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 
 import config
 
@@ -15,4 +16,10 @@ class AgentConfig:
 
     def build_system_prompt(self, memory: str) -> str:
         memory_section = memory.strip() if memory.strip() else "(nothing yet)"
-        return self.system_prompt_template.replace("{memory}", memory_section)
+        now = datetime.now()
+        current_datetime = now.strftime("%Y-%m-%d, %A, %H:%M")
+        return (
+            self.system_prompt_template.replace("{memory}", memory_section).replace(
+                "{current_datetime}", current_datetime
+            )
+        )
