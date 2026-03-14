@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import logging
 
 from telegram import BotCommand, Update
@@ -48,19 +49,21 @@ def _reset_session(model: str | None = None) -> None:
 
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     _reset_session()
+    name = html.escape(AGENT.name)
+    model = html.escape(session["model"])
     await update.message.reply_text(
-        f"Hey! I'm your *{AGENT.name}*.\n\n"
+        f"Hey! I'm your <b>{name}</b>.\n\n"
         "Commands:\n"
         "/new [model|cheap|max] — start a fresh conversation (max = search on)\n"
         "/search on|off — toggle web search\n"
-        "/remember <text> — save a note to memory\n"
+        "/remember &lt;text&gt; — save a note to memory\n"
         "/memory — show what I remember\n"
         "/forget — wipe memory (backs up first)\n"
         "/summarize — condense memory (backs up first)\n"
-        "/model <slug> — switch LLM model\n"
+        "/model &lt;slug&gt; — switch LLM model\n"
         "/cheap — use 3.1 flash lite (cheaper)\n\n"
-        f"Current model: `{session['model']}`",
-        parse_mode="Markdown",
+        f"Current model: <code>{model}</code>",
+        parse_mode="HTML",
     )
 
 
@@ -79,24 +82,25 @@ async def cmd_new(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     _reset_session(model)
     if search_on:
         session["web_search"] = True
-    msg = f"Fresh conversation started.\nModel: `{session['model']}`"
+    model_esc = html.escape(session["model"])
+    msg = f"Fresh conversation started.\nModel: <code>{model_esc}</code>"
     if session["web_search"]:
-        msg += "\nWeb search *on*."
-    await update.message.reply_text(msg, parse_mode="Markdown")
+        msg += "\nWeb search <b>on</b>."
+    await update.message.reply_text(msg, parse_mode="HTML")
 
 
 async def cmd_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     if not ctx.args:
         status = "on" if session["web_search"] else "off"
-        await update.message.reply_text(f"Web search is *{status}*.", parse_mode="Markdown")
+        await update.message.reply_text(f"Web search is <b>{status}</b>.", parse_mode="HTML")
         return
     flag = ctx.args[0].lower()
     if flag == "on":
         session["web_search"] = True
-        await update.message.reply_text("Web search *enabled* for this conversation.", parse_mode="Markdown")
+        await update.message.reply_text("Web search <b>enabled</b> for this conversation.", parse_mode="HTML")
     elif flag == "off":
         session["web_search"] = False
-        await update.message.reply_text("Web search *disabled*.", parse_mode="Markdown")
+        await update.message.reply_text("Web search <b>disabled</b>.", parse_mode="HTML")
     else:
         await update.message.reply_text("Usage: /search on|off")
 
@@ -107,7 +111,8 @@ async def cmd_remember(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("Usage: /remember <something to remember>")
         return
     memory.append(AGENT.slug, text)
-    await update.message.reply_text(f"Noted: _{text}_", parse_mode="Markdown")
+    text_esc = html.escape(text)
+    await update.message.reply_text(f"Noted: <i>{text_esc}</i>", parse_mode="HTML")
 
 
 async def cmd_memory(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -141,23 +146,26 @@ async def cmd_summarize(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def cmd_model(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     if not ctx.args:
+        model_esc = html.escape(session["model"])
         await update.message.reply_text(
-            f"Current model: `{session['model']}`",
-            parse_mode="Markdown",
+            f"Current model: <code>{model_esc}</code>",
+            parse_mode="HTML",
         )
         return
     session["model"] = ctx.args[0]
+    model_esc = html.escape(session["model"])
     await update.message.reply_text(
-        f"Model switched to `{session['model']}`",
-        parse_mode="Markdown",
+        f"Model switched to <code>{model_esc}</code>",
+        parse_mode="HTML",
     )
 
 
 async def cmd_cheap(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     session["model"] = CHEAP_MODEL
+    model_esc = html.escape(CHEAP_MODEL)
     await update.message.reply_text(
-        f"Switched to cheap model: `{CHEAP_MODEL}`",
-        parse_mode="Markdown",
+        f"Switched to cheap model: <code>{model_esc}</code>",
+        parse_mode="HTML",
     )
 
 
@@ -190,11 +198,12 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
 
 
 async def _send_reply(update: Update, text: str) -> None:
-    """Send text back, handling length limits and markdown parse failures."""
+    """Send text back, handling length limits and HTML parse failures."""
     chunks = [text[i : i + MAX_TG_LEN] for i in range(0, len(text), MAX_TG_LEN)]
     for chunk in chunks:
+        chunk_safe = html.escape(chunk)
         try:
-            await update.message.reply_text(chunk, parse_mode="Markdown")
+            await update.message.reply_text(chunk_safe, parse_mode="HTML")
         except BadRequest:
             await update.message.reply_text(chunk)
 
