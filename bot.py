@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import html
 import logging
+import re
 
 from telegram import BotCommand, Update
 from telegram.ext import (
@@ -21,6 +22,26 @@ import memory
 from agents.gym_coach import gym_coach
 
 MAX_TG_LEN = 4096
+
+
+def _markdown_to_telegram_html(text: str) -> str:
+    """Convert common Markdown to Telegram HTML so LLM replies format correctly."""
+    text = html.escape(text)
+    # Bold: **text**
+    text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text, flags=re.DOTALL)
+    # Line-start asterisk bullets → bullet character so they don't become italic
+    text = re.sub(r"^\* +", "• ", text, flags=re.MULTILINE)
+    # Italic: *text* (single asterisk)
+    text = re.sub(r"\*([^*]+?)\*", r"<i>\1</i>", text, flags=re.DOTALL)
+    # Italic: _text_
+    text = re.sub(r"_([^_]+?)_", r"<i>\1</i>", text, flags=re.DOTALL)
+    # Code: `text`
+    text = re.sub(r"`([^`]+?)`", r"<code>\1</code>", text, flags=re.DOTALL)
+    # Headers: ### or ## or # at line start
+    text = re.sub(r"^### (.+)$", r"<b>\1</b>", text, flags=re.MULTILINE)
+    text = re.sub(r"^## (.+)$", r"<b>\1</b>", text, flags=re.MULTILINE)
+    text = re.sub(r"^# (.+)$", r"<b>\1</b>", text, flags=re.MULTILINE)
+    return text
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -201,9 +222,9 @@ async def _send_reply(update: Update, text: str) -> None:
     """Send text back, handling length limits and HTML parse failures."""
     chunks = [text[i : i + MAX_TG_LEN] for i in range(0, len(text), MAX_TG_LEN)]
     for chunk in chunks:
-        chunk_safe = html.escape(chunk)
+        chunk_html = _markdown_to_telegram_html(chunk)
         try:
-            await update.message.reply_text(chunk_safe, parse_mode="HTML")
+            await update.message.reply_text(chunk_html, parse_mode="HTML")
         except BadRequest:
             await update.message.reply_text(chunk)
 
