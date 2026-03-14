@@ -5,10 +5,10 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=ali
+User=root
 WorkingDirectory=/root/repo/agent-coach
 EnvironmentFile=/root/repo/agent-coach/.env
-ExecStart=/root/repo/agent-coach/.venv/bin/python bot.py
+ExecStart=/root/repo/agent-coach/.venv/bin/python3 bot.py
 Restart=always
 RestartSec=5
 
