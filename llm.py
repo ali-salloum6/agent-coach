@@ -64,3 +64,19 @@ async def extract_memories(
     if stripped.upper() == "NONE" or not stripped:
         return None
     return stripped
+
+
+async def summarize_memory(existing_memory: str) -> str:
+    """Condense memory into a shorter markdown summary. Uses EXTRACTION_MODEL."""
+    prompt = (
+        "Summarize this memory file into a shorter markdown document. "
+        "Keep all important facts, preferences, goals, and personal details. "
+        "Use clear headings and bullet points. Remove redundancy and merge similar items. "
+        "Output only the summarized markdown, no preamble.\n\n"
+        f"Memory to summarize:\n{existing_memory}"
+    )
+    result = await chat(
+        messages=[{"role": "user", "content": prompt}],
+        model=config.EXTRACTION_MODEL,
+    )
+    return result.strip()

@@ -40,6 +40,34 @@ def forget(agent_slug: str) -> str | None:
     return str(backup)
 
 
+def _backup_memory(agent_slug: str) -> Path | None:
+    """Copy memory file to a timestamped backup. Returns backup path or None."""
+    path = _memory_path(agent_slug)
+    if not path.exists():
+        return None
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup = path.with_suffix(f".backup_{timestamp}.md")
+    shutil.copy2(path, backup)
+    return backup
+
+
+async def summarize(agent_slug: str) -> tuple[bool, str]:
+    """Backup current memory, then replace it with a summarized version. Uses 3.1 flash lite.
+    Returns (success, message)."""
+    path = _memory_path(agent_slug)
+    if not path.exists():
+        return False, "Memory is empty; nothing to summarize."
+    content = path.read_text()
+    if not content.strip():
+        return False, "Memory is empty; nothing to summarize."
+    backup = _backup_memory(agent_slug)
+    if not backup:
+        return False, "Could not create backup."
+    summary = await llm.summarize_memory(content)
+    path.write_text(summary)
+    return True, f"Memory summarized. Backup: {backup.name}"
+
+
 async def extract_and_save(
     agent_slug: str,
     user_message: str,
