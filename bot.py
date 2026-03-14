@@ -35,6 +35,8 @@ session: dict = {
     "web_search": False,
 }
 
+CHEAP_MODEL = "google/gemini-3.1-flash-lite-preview"
+
 
 def _reset_session(model: str | None = None) -> None:
     mem = memory.load(AGENT.slug)
@@ -49,7 +51,7 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         f"Hey! I'm your *{AGENT.name}*.\n\n"
         "Commands:\n"
-        "/new [model] — start a fresh conversation\n"
+        "/new [model|cheap|max] — start a fresh conversation (max = search on)\n"
         "/search on|off — toggle web search\n"
         "/remember <text> — save a note to memory\n"
         "/memory — show what I remember\n"
@@ -63,12 +65,24 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_new(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    model = " ".join(ctx.args) if ctx.args else None
+    raw = " ".join(ctx.args) if ctx.args else None
+    raw_lower = raw.strip().lower() if raw else None
+    if raw_lower == "cheap":
+        model = CHEAP_MODEL
+        search_on = False
+    elif raw_lower == "max":
+        model = None
+        search_on = True
+    else:
+        model = raw
+        search_on = False
     _reset_session(model)
-    await update.message.reply_text(
-        f"Fresh conversation started.\nModel: `{session['model']}`",
-        parse_mode="Markdown",
-    )
+    if search_on:
+        session["web_search"] = True
+    msg = f"Fresh conversation started.\nModel: `{session['model']}`"
+    if session["web_search"]:
+        msg += "\nWeb search *on*."
+    await update.message.reply_text(msg, parse_mode="Markdown")
 
 
 async def cmd_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -139,9 +153,6 @@ async def cmd_model(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
-CHEAP_MODEL = "google/gemini-3.1-flash-lite-preview"
-
-
 async def cmd_cheap(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     session["model"] = CHEAP_MODEL
     await update.message.reply_text(
@@ -197,7 +208,7 @@ async def _background_extract(user_text: str, assistant_reply: str) -> None:
 
 BOT_COMMANDS = [
     BotCommand("start", "See greeting and commands"),
-    BotCommand("new", "Start fresh conversation [model]"),
+    BotCommand("new", "Start fresh (cheap=cheap model, max=search on)"),
     BotCommand("search", "Toggle web search (on|off)"),
     BotCommand("remember", "Save a note to memory"),
     BotCommand("memory", "Show what I remember"),
