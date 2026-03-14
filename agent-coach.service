@@ -1,0 +1,16 @@
+[Unit]
+Description=Telegram AI Coach (agent-coach)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ali
+WorkingDirectory=/root/repo/agent-coach
+EnvironmentFile=/root/repo/agent-coach/.env
+ExecStart=/root/repo/agent-coach/.venv/bin/python bot.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
