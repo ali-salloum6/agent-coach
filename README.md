@@ -48,6 +48,7 @@ A Telegram bot that acts as a long-term AI assistant with persistent memory. Fir
 | `/remember <text>` | Manually add a note to memory |
 | `/memory` | Show what the bot remembers |
 | `/forget` | Wipe memory (creates a timestamped backup first) |
+| `/summarize` | Condense memory (backs up first; uses 3.1 flash lite) |
 | `/model <slug>` | Change the LLM model mid-conversation |
 
 ## How memory works

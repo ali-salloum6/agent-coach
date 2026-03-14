@@ -54,6 +54,7 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         "/remember <text> — save a note to memory\n"
         "/memory — show what I remember\n"
         "/forget — wipe memory (backs up first)\n"
+        "/summarize — condense memory (backs up first)\n"
         "/model <slug> — switch LLM model\n"
         "/cheap — use 3.1 flash lite (cheaper)\n\n"
         f"Current model: `{session['model']}`",
@@ -112,6 +113,16 @@ async def cmd_forget(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("Memory wiped. A backup was saved.")
     else:
         await update.message.reply_text("Nothing to forget — memory was already empty.")
+
+
+async def cmd_summarize(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text("Summarizing memory…")
+    try:
+        ok, msg = await memory.summarize(AGENT.slug)
+        await update.message.reply_text(msg)
+    except Exception:
+        log.exception("Summarize failed")
+        await update.message.reply_text("Summarization failed. Your memory was not changed.")
 
 
 async def cmd_model(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -193,6 +204,7 @@ def main() -> None:
     app.add_handler(CommandHandler("remember", cmd_remember))
     app.add_handler(CommandHandler("memory", cmd_memory))
     app.add_handler(CommandHandler("forget", cmd_forget))
+    app.add_handler(CommandHandler("summarize", cmd_summarize))
     app.add_handler(CommandHandler("model", cmd_model))
     app.add_handler(CommandHandler("cheap", cmd_cheap))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
