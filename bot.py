@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import html
+import itertools
 import logging
 import re
+import time
 
 from telegram import BotCommand, Update
 from telegram.ext import (
@@ -58,6 +60,9 @@ session: dict = {
 }
 
 CHEAP_MODEL = "google/gemini-3.1-flash-lite-preview"
+STREAM_FLUSH_INTERVAL_SECONDS = 0.25
+STREAM_FLUSH_MIN_CHARS = 24
+_draft_id_counter = itertools.count(start=int(time.time()))
 
 
 def _reset_session(model: str | None = None) -> None:
@@ -199,23 +204,100 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
 
     await update.message.chat.send_action("typing")
 
+    reply_parts: list[str] = []
+    chat_id = update.effective_chat.id if update.effective_chat else None
+    can_stream_draft = (
+        chat_id is not None
+        and update.effective_chat is not None
+        and update.effective_chat.type == "private"
+    )
+    draft_id = next(_draft_id_counter)
+    loop = asyncio.get_running_loop()
+    last_flush_at = loop.time()
+    pending_chars = 0
+
     try:
-        reply = await llm.chat(
+        async for delta in llm.chat_stream(
             messages=session["history"],
             model=session["model"],
             web_search=session["web_search"],
-        )
-    except Exception:
-        log.exception("LLM call failed")
-        await update.message.reply_text("Something went wrong talking to the model. Try again.")
-        session["history"].pop()
-        return
+        ):
+            reply_parts.append(delta)
+            pending_chars += len(delta)
 
+            if not can_stream_draft:
+                continue
+
+            now = loop.time()
+            should_flush = (
+                pending_chars >= STREAM_FLUSH_MIN_CHARS
+                or (now - last_flush_at) >= STREAM_FLUSH_INTERVAL_SECONDS
+            )
+            if not should_flush:
+                continue
+
+            partial_text = "".join(reply_parts)[:MAX_TG_LEN]
+            if partial_text.strip():
+                can_stream_draft = await _send_draft(ctx, chat_id, draft_id, partial_text)
+            pending_chars = 0
+            last_flush_at = now
+
+    except Exception:
+        if not reply_parts:
+            log.exception("LLM stream failed, trying non-stream fallback")
+            try:
+                reply = await llm.chat(
+                    messages=session["history"],
+                    model=session["model"],
+                    web_search=session["web_search"],
+                )
+            except Exception:
+                log.exception("LLM call failed")
+                await update.message.reply_text("Something went wrong talking to the model. Try again.")
+                session["history"].pop()
+                return
+        else:
+            log.exception("LLM stream failed mid-response, using collected partial reply")
+            reply = "".join(reply_parts)
+    else:
+        if can_stream_draft and pending_chars > 0:
+            partial_text = "".join(reply_parts)[:MAX_TG_LEN]
+            if partial_text.strip():
+                await _send_draft(ctx, chat_id, draft_id, partial_text)
+        reply = "".join(reply_parts)
+
+    if not reply:
+        reply = "(empty response)"
     session["history"].append({"role": "assistant", "content": reply})
 
-    await _send_reply(update, reply or "(empty response)")
+    await _send_reply(update, reply)
 
-    asyncio.create_task(_background_extract(user_text, reply or ""))
+    asyncio.create_task(_background_extract(user_text, reply))
+
+
+async def _send_draft(
+    ctx: ContextTypes.DEFAULT_TYPE,
+    chat_id: int,
+    draft_id: int,
+    text: str,
+) -> bool:
+    """Try Telegram native draft streaming and return whether it remains usable."""
+    if not text:
+        return True
+    try:
+        await ctx.bot.do_api_request(
+            "sendMessageDraft",
+            {
+                "chat_id": chat_id,
+                "draft_id": draft_id,
+                "text": text[:MAX_TG_LEN],
+            },
+        )
+        return True
+    except Exception:
+        # Keep this non-fatal: chat should still complete via final send_message.
+        log.exception("sendMessageDraft failed; disabling draft streaming for this reply")
+        return False
 
 
 async def _send_reply(update: Update, text: str) -> None:

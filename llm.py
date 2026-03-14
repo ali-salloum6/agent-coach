@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import logging
+from collections.abc import AsyncIterator
 
 import httpx
 
@@ -9,23 +11,31 @@ import config
 log = logging.getLogger(__name__)
 
 
-async def chat(
-    messages: list[dict],
-    model: str = config.DEFAULT_MODEL,
-    web_search: bool = False,
-) -> str:
-    """Send messages to OpenRouter and return the assistant's reply text."""
+def _build_request_body(messages: list[dict], model: str, web_search: bool) -> dict:
     body: dict = {
         "model": model,
         "messages": messages,
     }
     if web_search:
         body["plugins"] = [{"id": "web"}]
+    return body
 
-    headers = {
+
+def _request_headers() -> dict[str, str]:
+    return {
         "Authorization": f"Bearer {config.OPENROUTER_API_KEY}",
         "Content-Type": "application/json",
     }
+
+
+async def chat(
+    messages: list[dict],
+    model: str = config.DEFAULT_MODEL,
+    web_search: bool = False,
+) -> str:
+    """Send messages to OpenRouter and return the assistant's reply text."""
+    body = _build_request_body(messages, model, web_search)
+    headers = _request_headers()
 
     async with httpx.AsyncClient(timeout=120) as client:
         resp = await client.post(config.OPENROUTER_BASE_URL, json=body, headers=headers)
@@ -35,6 +45,57 @@ async def chat(
         data = resp.json()
 
     return data["choices"][0]["message"]["content"]
+
+
+async def chat_stream(
+    messages: list[dict],
+    model: str = config.DEFAULT_MODEL,
+    web_search: bool = False,
+) -> AsyncIterator[str]:
+    """Stream text deltas from OpenRouter chat completions SSE endpoint."""
+    body = _build_request_body(messages, model, web_search)
+    body["stream"] = True
+    headers = _request_headers()
+
+    async with httpx.AsyncClient(timeout=120) as client:
+        async with client.stream("POST", config.OPENROUTER_BASE_URL, json=body, headers=headers) as resp:
+            if resp.is_error:
+                error_text = await resp.aread()
+                error_text_decoded = error_text.decode(errors="replace")
+                log.error("OpenRouter stream %s for model=%s: %s", resp.status_code, model, error_text_decoded)
+                resp.raise_for_status()
+
+            async for line in resp.aiter_lines():
+                if not line:
+                    continue
+                if line.startswith(":"):
+                    # Keep-alive/comment lines in SSE, safe to ignore.
+                    continue
+                if not line.startswith("data: "):
+                    continue
+
+                payload = line[6:].strip()
+                if not payload:
+                    continue
+                if payload == "[DONE]":
+                    break
+
+                try:
+                    chunk = json.loads(payload)
+                except json.JSONDecodeError:
+                    continue
+
+                if "error" in chunk:
+                    message = chunk["error"].get("message", "unknown stream error")
+                    raise RuntimeError(f"OpenRouter stream error: {message}")
+
+                choices = chunk.get("choices") or []
+                if not choices:
+                    continue
+                delta = choices[0].get("delta") or {}
+                content = delta.get("content")
+                if content:
+                    yield content
 
 
 async def extract_memories(
