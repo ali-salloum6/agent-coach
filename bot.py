@@ -149,7 +149,11 @@ async def cmd_memory(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     # Telegram messages max out at 4096 chars
     if len(mem) > 4000:
         mem = mem[:4000] + "\n\n…(truncated)"
-    await update.message.reply_text(mem)
+    mem_html = _markdown_to_telegram_html(mem)
+    try:
+        await update.message.reply_text(mem_html, parse_mode="HTML")
+    except BadRequest:
+        await update.message.reply_text(mem)
 
 
 async def cmd_forget(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
