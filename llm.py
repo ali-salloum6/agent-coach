@@ -108,9 +108,13 @@ async def extract_memories(
     Returns a markdown bullet list of new facts, or None if nothing new.
     """
     prompt = (
-        "Extract any new facts, preferences, goals, or personal details worth "
-        "remembering from this exchange. Return ONLY a markdown bullet list of "
-        'new facts, or "NONE" if nothing new is worth remembering. Be concise. '
+        "Extract new facts worth remembering from this exchange. Save:\n"
+        "- What the user said: their situation, status, preferences, goals, what they did or shared.\n"
+        "- When the user asks a factual question about something they did (e.g. 'how much X in what I ate/did?'), "
+        "save the answer as a fact about the user (e.g. 'User had X amount of Y').\n"
+        "Do NOT save the assistant's advice or recommendations—only facts that describe the user's actual situation. "
+        "Return ONLY a markdown bullet list of new facts, or \"NONE\" if nothing new. Be concise. "
+        "If you should save a suggestion from the assistant, do not save it as a fact-note that it was suggested."
         "Do not repeat known facts.\n\n"
         f"Known facts:\n{existing_memory or '(none yet)'}\n\n"
         f"Exchange:\nUser: {user_message}\nAssistant: {assistant_response}"
