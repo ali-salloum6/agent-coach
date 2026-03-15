@@ -214,7 +214,15 @@ async def cmd_model(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             parse_mode="HTML",
         )
         return
-    session["model"] = ctx.args[0]
+    slug = ctx.args[0].strip().lower()
+    if slug == "mid":
+        session["model"] = config.EXTRACTION_MODEL
+    elif slug == "cheap":
+        session["model"] = config.CHEAP_MODEL
+    elif slug == "max":
+        session["model"] = config.DEFAULT_MODEL
+    else:
+        session["model"] = ctx.args[0]
     model_esc = html.escape(session["model"])
     await update.message.reply_text(
         f"Model switched to <code>{model_esc}</code>",
