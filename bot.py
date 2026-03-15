@@ -65,6 +65,20 @@ STREAM_FLUSH_MIN_CHARS = 24
 _draft_id_counter = itertools.count(start=int(time.time()))
 
 
+def _is_allowed_user(update: Update) -> bool:
+    """True if no restriction is set, or the update is from the allowed user."""
+    if not config.ALLOWED_USERNAME and config.ALLOWED_USER_ID is None:
+        return True
+    user = update.effective_user
+    if not user:
+        return False
+    if config.ALLOWED_USERNAME and (user.username or "").lower() == config.ALLOWED_USERNAME.lower():
+        return True
+    if config.ALLOWED_USER_ID is not None and user.id == config.ALLOWED_USER_ID:
+        return True
+    return False
+
+
 def _reset_session(model: str | None = None) -> None:
     mem = memory.load(AGENT.slug)
     system_prompt = AGENT.build_system_prompt(mem)
@@ -74,6 +88,8 @@ def _reset_session(model: str | None = None) -> None:
 
 
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_allowed_user(update):
+        return
     _reset_session()
     name = html.escape(AGENT.name)
     model = html.escape(session["model"])
@@ -94,6 +110,8 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_new(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_allowed_user(update):
+        return
     raw = " ".join(ctx.args) if ctx.args else None
     raw_lower = raw.strip().lower() if raw else None
     if raw_lower == "cheap":
@@ -116,6 +134,8 @@ async def cmd_new(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_allowed_user(update):
+        return
     if not ctx.args:
         status = "on" if session["web_search"] else "off"
         await update.message.reply_text(f"Web search is <b>{status}</b>.", parse_mode="HTML")
@@ -132,6 +152,8 @@ async def cmd_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_remember(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_allowed_user(update):
+        return
     text = " ".join(ctx.args) if ctx.args else ""
     if not text:
         await update.message.reply_text("Usage: /remember <something to remember>")
@@ -142,6 +164,8 @@ async def cmd_remember(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_memory(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_allowed_user(update):
+        return
     mem = memory.load(AGENT.slug)
     if not mem.strip():
         await update.message.reply_text("Memory is empty.")
@@ -157,6 +181,8 @@ async def cmd_memory(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_forget(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_allowed_user(update):
+        return
     backup = memory.forget(AGENT.slug)
     if backup:
         await update.message.reply_text("Memory wiped. A backup was saved.")
@@ -165,6 +191,8 @@ async def cmd_forget(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_summarize(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_allowed_user(update):
+        return
     await update.message.reply_text("Summarizing memory…")
     try:
         ok, msg = await memory.summarize(AGENT.slug)
@@ -175,6 +203,8 @@ async def cmd_summarize(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_model(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_allowed_user(update):
+        return
     if not ctx.args:
         model_esc = html.escape(session["model"])
         await update.message.reply_text(
@@ -191,6 +221,8 @@ async def cmd_model(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_cheap(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_allowed_user(update):
+        return
     session["model"] = CHEAP_MODEL
     model_esc = html.escape(CHEAP_MODEL)
     await update.message.reply_text(
@@ -200,6 +232,8 @@ async def cmd_cheap(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_allowed_user(update):
+        return
     user_text = update.message.text
     if not user_text:
         return
