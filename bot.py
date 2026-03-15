@@ -263,12 +263,14 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
     loop = asyncio.get_running_loop()
     last_flush_at = loop.time()
     pending_chars = 0
+    response_meta: dict = {}
 
     try:
         async for delta in llm.chat_stream(
             messages=session["history"],
             model=session["model"],
             web_search=session["web_search"],
+            response_meta=response_meta,
         ):
             reply_parts.append(delta)
             pending_chars += len(delta)
@@ -298,6 +300,7 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
                     messages=session["history"],
                     model=session["model"],
                     web_search=session["web_search"],
+                    response_meta=response_meta,
                 )
             except Exception:
                 log.exception("LLM call failed")
@@ -319,6 +322,14 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
     session["history"].append({"role": "assistant", "content": reply})
 
     await _send_reply(update, reply)
+
+    if fallback_info := response_meta.get("fallback_used"):
+        original, fallback = fallback_info
+        await update.message.reply_text(
+            f"⚠️ Rate limited on <code>{html.escape(original)}</code>; "
+            f"response was generated with <code>{html.escape(fallback)}</code>.",
+            parse_mode="HTML",
+        )
 
     asyncio.create_task(_background_extract(user_text, reply))
 
