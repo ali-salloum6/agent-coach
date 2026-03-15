@@ -3,9 +3,16 @@ from __future__ import annotations
 import shutil
 from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import config
 import llm
+
+MOSCOW = ZoneInfo("Europe/Moscow")
+
+
+def _now_moscow() -> datetime:
+    return datetime.now(MOSCOW)
 
 
 def _memory_path(agent_slug: str) -> Path:
@@ -23,7 +30,7 @@ def load(agent_slug: str) -> str:
 def append(agent_slug: str, text: str) -> None:
     """Append a timestamped entry to the memory file."""
     path = _memory_path(agent_slug)
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+    timestamp = _now_moscow().strftime("%Y-%m-%d %H:%M")
     entry = f"\n- [{timestamp}] {text}\n"
     with open(path, "a") as f:
         f.write(entry)
@@ -34,7 +41,7 @@ def forget(agent_slug: str) -> str | None:
     path = _memory_path(agent_slug)
     if not path.exists():
         return None
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = _now_moscow().strftime("%Y%m%d_%H%M%S")
     backup = path.with_suffix(f".backup_{timestamp}.md")
     shutil.move(path, backup)
     return str(backup)
@@ -45,7 +52,7 @@ def _backup_memory(agent_slug: str) -> Path | None:
     path = _memory_path(agent_slug)
     if not path.exists():
         return None
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = _now_moscow().strftime("%Y%m%d_%H%M%S")
     backup = path.with_suffix(f".backup_{timestamp}.md")
     shutil.copy2(path, backup)
     return backup
@@ -79,7 +86,7 @@ async def extract_and_save(
     new_facts = await llm.extract_memories(user_message, assistant_response, existing)
     if new_facts:
         path = _memory_path(agent_slug)
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+        timestamp = _now_moscow().strftime("%Y-%m-%d %H:%M")
         entry = f"\n### Auto-extracted [{timestamp}]\n{new_facts}\n"
         with open(path, "a") as f:
             f.write(entry)
