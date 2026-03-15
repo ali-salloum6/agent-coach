@@ -132,7 +132,7 @@ async def extract_memories(
 
 
 async def summarize_memory(existing_memory: str) -> str:
-    """Condense memory into a shorter markdown summary. Uses EXTRACTION_MODEL."""
+    """Condense memory into a shorter markdown summary. Uses EXTRACTION_MODEL (gemini-3-flash-preview)."""
     prompt = (
         "Summarize this memory file into a shorter markdown document. "
         "Keep all important facts, preferences, goals, and personal details. "

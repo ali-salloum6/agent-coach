@@ -59,7 +59,6 @@ session: dict = {
     "web_search": False,
 }
 
-CHEAP_MODEL = "google/gemini-3.1-flash-lite-preview"
 STREAM_FLUSH_INTERVAL_SECONDS = 0.25
 STREAM_FLUSH_MIN_CHARS = 24
 _draft_id_counter = itertools.count(start=int(time.time()))
@@ -96,7 +95,7 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         f"Hey! I'm your <b>{name}</b>.\n\n"
         "Commands:\n"
-        "/new [model|cheap|max] — start a fresh conversation (max = search on)\n"
+        "/new [model|cheap|mid|max] — start a fresh conversation (mid = gemini-3-flash; max = search on)\n"
         "/search on|off — toggle web search\n"
         "/remember &lt;text&gt; — save a note to memory\n"
         "/memory — show what I remember\n"
@@ -115,7 +114,10 @@ async def cmd_new(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     raw = " ".join(ctx.args) if ctx.args else None
     raw_lower = raw.strip().lower() if raw else None
     if raw_lower == "cheap":
-        model = CHEAP_MODEL
+        model = config.CHEAP_MODEL
+        search_on = False
+    elif raw_lower == "mid":
+        model = config.EXTRACTION_MODEL
         search_on = False
     elif raw_lower == "max":
         model = None
@@ -223,8 +225,8 @@ async def cmd_model(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 async def cmd_cheap(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_allowed_user(update):
         return
-    session["model"] = CHEAP_MODEL
-    model_esc = html.escape(CHEAP_MODEL)
+    session["model"] = config.CHEAP_MODEL
+    model_esc = html.escape(config.CHEAP_MODEL)
     await update.message.reply_text(
         f"Switched to cheap model: <code>{model_esc}</code>",
         parse_mode="HTML",
