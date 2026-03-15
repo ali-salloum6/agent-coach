@@ -2,8 +2,8 @@
 
 A Telegram bot that acts as a long-term AI assistant with persistent memory. First agent: **gym coach** (injuries, diet, exercises, programming). Built to be generic so you can add more specialist bots later.
 
-- **Memory**: Remembers (almost) everything you tell it. Stored in `data/<agent>.md`, loaded into the system prompt on each new conversation.
-- **OpenRouter**: Any model via OpenRouter (e.g. `/new google/gemini-3.1-flash-lite`). Default: `google/gemini-3.1-pro-preview`.
+- **Memory**: Remembers (almost) everything you tell it. Stored in `data/<agent>.md`, loaded into the system prompt on each new conversation. Timestamps in memory are **Moscow time** (Europe/Moscow).
+- **OpenRouter**: Model shortcuts: `mid` = gemini-3-flash, `cheap` = gemini-3.1-flash-lite, `max` = default (pro). Or use a full slug (e.g. `/new google/gemini-3.1-flash-lite`). Default: `google/gemini-3.1-pro-preview`.
 - **Web search**: Toggle per conversation with `/search on|off` (uses OpenRouter’s web plugin).
 
 ## Setup
@@ -43,18 +43,19 @@ A Telegram bot that acts as a long-term AI assistant with persistent memory. Fir
 | Command | Description |
 |--------|-------------|
 | `/start` | Welcome message and command list |
-| `/new [model]` | Start a fresh conversation; loads memory. Optional: set model (e.g. `/new google/gemini-3.1-flash-lite`) |
+| `/new [model\|cheap\|mid\|max]` | Start a fresh conversation; loads memory. Optional: `cheap` / `mid` / `max` (max = default model + web search on), or a full OpenRouter model slug |
 | `/search on\|off` | Turn web search on or off for this conversation |
 | `/remember <text>` | Manually add a note to memory |
 | `/memory` | Show what the bot remembers |
 | `/forget` | Wipe memory (creates a timestamped backup first) |
 | `/summarize` | Condense memory (backs up first; uses gemini-3-flash-preview) |
-| `/model <slug>` | Change the LLM model mid-conversation |
+| `/model <slug>` | Switch model: `mid` / `cheap` / `max`, or a full OpenRouter model slug |
+| `/cheap` | Shortcut to switch to the cheap model (gemini-3.1-flash-lite) |
 
 ## How memory works
 
-- **Auto**: After each exchange, a cheap model extracts new facts and appends them to `data/gym_coach.md` (with timestamps).
-- **Manual**: `/remember <text>` appends a line to the same file.
+- **Auto**: After each exchange, the extraction model (gemini-3-flash-preview) extracts new facts and appends them to `data/<agent>.md` with timestamps in **Moscow time**.
+- **Manual**: `/remember <text>` appends a timestamped line to the same file (also Moscow time).
 - On `/new`, the full memory file is injected into the **system prompt** under “What you remember about the user”, so the coach has full context every new chat.
 
 ## Project layout
