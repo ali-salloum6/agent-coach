@@ -53,6 +53,7 @@ def _backup_memory(agent_slug: str) -> Path | None:
 
 async def summarize(agent_slug: str) -> tuple[bool, str]:
     """Backup current memory, then replace it with a summarized version. Uses 3.1 flash lite.
+    Dates/timestamps are preserved (entries from the same day may be combined).
     Returns (success, message)."""
     path = _memory_path(agent_slug)
     if not path.exists():

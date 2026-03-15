@@ -133,6 +133,8 @@ async def summarize_memory(existing_memory: str) -> str:
         "Summarize this memory file into a shorter markdown document. "
         "Keep all important facts, preferences, goals, and personal details. "
         "Use clear headings and bullet points. Remove redundancy and merge similar items. "
+        "Preserve timestamps: keep at least the date (YYYY-MM-DD) for when things were noted. "
+        "You may combine multiple items from the same day under one date; do not strip dates entirely.\n"
         "Output only the summarized markdown, no preamble.\n\n"
         f"Memory to summarize:\n{existing_memory}"
     )
