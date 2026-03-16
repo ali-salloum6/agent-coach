@@ -7,6 +7,7 @@ load_dotenv()
 
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 OPENROUTER_API_KEY = os.environ["OPENROUTER_API_KEY"]
+ACTIVE_AGENT = os.environ.get("ACTIVE_AGENT", "gym_coach").strip() or "gym_coach"
 
 # Optional: bot only responds to this user (username without @, or set ALLOWED_USER_ID for numeric id)
 ALLOWED_USERNAME = os.environ.get("TELEGRAM_ALLOWED_USERNAME", "").strip() or None
@@ -28,5 +29,3 @@ RATE_LIMIT_FALLBACK: dict[str, str] = {
 
 DATA_DIR = Path(__file__).parent / "data"
 DATA_DIR.mkdir(exist_ok=True)
-
-ACTIVE_AGENT = "gym_coach"

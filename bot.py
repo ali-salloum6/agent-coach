@@ -21,6 +21,7 @@ from telegram.error import BadRequest
 import config
 import llm
 import memory
+from agents.german_exam import german_exam
 from agents.gym_coach import gym_coach
 
 MAX_TG_LEN = 4096
@@ -51,7 +52,12 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-AGENT = gym_coach
+AGENT_REGISTRY = {
+    gym_coach.slug: gym_coach,
+    german_exam.slug: german_exam,
+}
+
+AGENT = AGENT_REGISTRY.get(config.ACTIVE_AGENT, gym_coach)
 
 session: dict = {
     "model": AGENT.default_model,
