@@ -6,6 +6,8 @@ import itertools
 import logging
 import re
 import time
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from telegram import BotCommand, Update
 from telegram.ext import (
@@ -254,7 +256,11 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
     if not user_text:
         return
 
-    session["history"].append({"role": "user", "content": user_text})
+    ts = datetime.now(ZoneInfo("Europe/Moscow")).strftime("%Y-%m-%d %H:%M Moscow")
+    session["history"].append({
+        "role": "user",
+        "content": f"[Sent at {ts}]\n\n{user_text}",
+    })
 
     await update.message.chat.send_action("typing")
 
