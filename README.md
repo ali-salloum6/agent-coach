@@ -73,10 +73,24 @@ agent-coach/
     gym_coach.md       # Persistent memory
 ```
 
-## Adding another agent
+## Adding another agent / running multiple bots
 
-1. Add `agents/<name>.py` with an `AgentConfig` (name, slug, system_prompt_template with `{memory}`).
-2. In `config.py`, set `ACTIVE_AGENT` to the new slug (or make agent selectable).
-3. In `bot.py`, import and use the new agent instead of `gym_coach`.
+- Each agent has:
+  - an `AgentConfig` in `agents/<name>.py` (name, slug, system_prompt_template with `{memory}`),
+  - its own memory file `data/<slug>.md`.
+- The active agent is selected via the `ACTIVE_AGENT` env var (defaults to `gym_coach`).
 
-Memory is per-agent: each agent gets its own `data/<slug>.md` file.
+To add a new agent:
+
+1. Add `agents/<name>.py` with an `AgentConfig` (see `agents/gym_coach.py` or `agents/german_exam.py`).
+2. Set `ACTIVE_AGENT=<slug>` in your `.env` (or systemd `EnvironmentFile`) for that bot instance.
+
+To run multiple bots on the same server (e.g. one gym coach, one German exam coach):
+
+1. Create two env files:
+   - `.env.gym` with `TELEGRAM_BOT_TOKEN=...`, `OPENROUTER_API_KEY=...`, `ACTIVE_AGENT=gym_coach`, etc.
+   - `.env.german` with `TELEGRAM_BOT_TOKEN=...`, `OPENROUTER_API_KEY=...`, `ACTIVE_AGENT=german_exam`, etc.
+2. Create two `systemd` services, both pointing to `bot.py` in the same repo, but each using a different `EnvironmentFile` (e.g. `/etc/systemd/system/agent-gym.service` and `/etc/systemd/system/agent-german.service`).
+3. `systemctl daemon-reload && systemctl enable --now agent-gym.service agent-german.service`.
+
+Each service will use its own Telegram token, allowed user, and agent persona, while sharing the same codebase.
