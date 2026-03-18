@@ -28,8 +28,10 @@ def _request_headers() -> dict[str, str]:
     }
 
 
-def _fallback_for_429(model: str) -> str | None:
+def _fallback_for_429(model: str, *, allow_fallback: bool) -> str | None:
     """Return fallback model for 429 rate limit, or None."""
+    if not allow_fallback:
+        return None
     return config.RATE_LIMIT_FALLBACK.get(model)
 
 
@@ -38,6 +40,7 @@ async def chat(
     model: str = config.DEFAULT_MODEL,
     web_search: bool = False,
     response_meta: dict | None = None,
+    allow_fallback: bool = True,
 ) -> str:
     """Send messages to OpenRouter and return the assistant's reply text.
     If response_meta is provided and a 429 fallback was used, sets
@@ -60,7 +63,7 @@ async def chat(
                 )
                 if (
                     resp.status_code == 429
-                    and (fallback := _fallback_for_429(current_model))
+                    and (fallback := _fallback_for_429(current_model, allow_fallback=allow_fallback))
                 ):
                     log.warning(
                         "Rate limited on %s, retrying with %s",
@@ -138,6 +141,7 @@ async def chat_stream(
     model: str = config.DEFAULT_MODEL,
     web_search: bool = False,
     response_meta: dict | None = None,
+    allow_fallback: bool = True,
 ) -> AsyncIterator[str]:
     """Stream text deltas from OpenRouter chat completions SSE endpoint.
     On 429 rate limit, retries once with the configured fallback model.
@@ -159,7 +163,7 @@ async def chat_stream(
             if (
                 e.response.status_code == 429
                 and not fallback_used
-                and (fallback := _fallback_for_429(current_model))
+                and (fallback := _fallback_for_429(current_model, allow_fallback=allow_fallback))
             ):
                 log.warning(
                     "Rate limited on %s, retrying stream with %s",
@@ -211,7 +215,7 @@ async def extract_memories(
 
 
 async def summarize_memory(existing_memory: str) -> str:
-    """Condense memory into a shorter markdown summary. Uses EXTRACTION_MODEL (gemini-3-flash-preview)."""
+    """Condense memory into a shorter markdown summary."""
     prompt = (
         "Summarize this memory file into a shorter markdown document. "
         "Keep all important facts, preferences, goals, and personal details. "
@@ -223,6 +227,7 @@ async def summarize_memory(existing_memory: str) -> str:
     )
     result = await chat(
         messages=[{"role": "user", "content": prompt}],
-        model=config.EXTRACTION_MODEL,
+        model=config.SUMMARIZATION_MODEL,
+        allow_fallback=False,
     )
     return result.strip()

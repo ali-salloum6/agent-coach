@@ -17,14 +17,15 @@ ALLOWED_USER_ID = int(_allowed_id) if _allowed_id else None
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 DEFAULT_MODEL = "google/gemini-3.1-pro-preview"
-EXTRACTION_MODEL = "google/gemini-3-flash-preview"
+SUMMARIZATION_MODEL = DEFAULT_MODEL
+EXTRACTION_MODEL = "google/gemini-3.1-flash-preview"
 CHEAP_MODEL = "google/gemini-3.1-flash-lite-preview"
 
 # On 429 rate limit, retry once with this model instead
 RATE_LIMIT_FALLBACK: dict[str, str] = {
-    "google/gemini-3.1-pro-preview": "anthropic/claude-opus-4.6",
-    "google/gemini-3-flash-preview": "anthropic/claude-sonnet-4.6",
-    "google/gemini-3.1-flash-lite-preview": "anthropic/claude-haiku-4.5",
+    "google/gemini-3.1-pro-preview": "z-ai/glm-5",
+    "google/gemini-3-flash-preview": "z-ai/glm-5",
+    "google/gemini-3.1-flash-lite-preview": "z-ai/glm-5",
 }
 
 DATA_DIR = Path(__file__).parent / "data"
