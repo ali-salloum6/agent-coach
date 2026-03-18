@@ -18,7 +18,7 @@ OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 DEFAULT_MODEL = "google/gemini-3.1-pro-preview"
 SUMMARIZATION_MODEL = DEFAULT_MODEL
-EXTRACTION_MODEL = "google/gemini-3.1-flash-preview"
+EXTRACTION_MODEL = "google/gemini-3.1-flash-lite-preview"
 CHEAP_MODEL = "google/gemini-3.1-flash-lite-preview"
 
 # On 429 rate limit, retry once with this model instead
