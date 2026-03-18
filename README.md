@@ -48,13 +48,13 @@ A Telegram bot that acts as a long-term AI assistant with persistent memory. Fir
 | `/remember <text>` | Manually add a note to memory |
 | `/memory` | Show what the bot remembers |
 | `/forget` | Wipe memory (creates a timestamped backup first) |
-| `/summarize` | Condense memory (backs up first; uses gemini-3-flash-preview) |
+| `/summarize` | Condense memory (backs up first; uses gemini-3.1-pro-preview; no fallback) |
 | `/model <slug>` | Switch model: `mid` / `cheap` / `max`, or a full OpenRouter model slug |
 | `/cheap` | Shortcut to switch to the cheap model (gemini-3.1-flash-lite) |
 
 ## How memory works
 
-- **Auto**: After each exchange, the extraction model (gemini-3-flash-preview) extracts new facts and appends them to `data/<agent>.md` with timestamps in **Moscow time**.
+- **Auto**: After each exchange, the extraction model (gemini-3.1-flash-preview; falls back to z-ai/glm-5 on 429) extracts new facts and appends them to `data/<agent>.md` with timestamps in **Moscow time**.
 - **Manual**: `/remember <text>` appends a timestamped line to the same file (also Moscow time).
 - On `/new`, the full memory file is injected into the **system prompt** under “What you remember about the user”, so the coach has full context every new chat.
 

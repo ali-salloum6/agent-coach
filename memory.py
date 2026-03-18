@@ -59,7 +59,7 @@ def _backup_memory(agent_slug: str) -> Path | None:
 
 
 async def summarize(agent_slug: str) -> tuple[bool, str]:
-    """Backup current memory, then replace it with a summarized version. Uses gemini-3-flash-preview.
+    """Backup current memory, then replace it with a summarized version (Gemini 3.1 Pro; no fallback).
     Dates/timestamps are preserved (entries from the same day may be combined).
     Returns (success, message)."""
     path = _memory_path(agent_slug)
