@@ -6,7 +6,7 @@ import itertools
 import logging
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -314,6 +314,7 @@ async def cmd_openrouter_balance(update: Update, ctx: ContextTypes.DEFAULT_TYPE)
         usage_weekly = info.get("usage_weekly")
         usage_monthly = info.get("usage_monthly")
         limit = info.get("limit")
+        limit_reset = info.get("limit_reset")
         limit_remaining = info.get("limit_remaining")
         label = info.get("label")
         free_tier = info.get("is_free_tier")
@@ -323,6 +324,46 @@ async def cmd_openrouter_balance(update: Update, ctx: ContextTypes.DEFAULT_TYPE)
                 return f"{value:.2f}"
             return str(value)
 
+        def _next_reset_utc(reset_cycle: object) -> str:
+            if not isinstance(reset_cycle, str):
+                return "unknown"
+            now = datetime.now(ZoneInfo("UTC"))
+            cycle = reset_cycle.strip().lower()
+            if cycle == "daily":
+                next_ts = (now + timedelta(days=1)).replace(
+                    hour=0, minute=0, second=0, microsecond=0
+                )
+            elif cycle == "weekly":
+                days_until_monday = (7 - now.weekday()) % 7
+                if days_until_monday == 0:
+                    days_until_monday = 7
+                next_ts = (now + timedelta(days=days_until_monday)).replace(
+                    hour=0, minute=0, second=0, microsecond=0
+                )
+            elif cycle == "monthly":
+                if now.month == 12:
+                    next_ts = now.replace(
+                        year=now.year + 1,
+                        month=1,
+                        day=1,
+                        hour=0,
+                        minute=0,
+                        second=0,
+                        microsecond=0,
+                    )
+                else:
+                    next_ts = now.replace(
+                        month=now.month + 1,
+                        day=1,
+                        hour=0,
+                        minute=0,
+                        second=0,
+                        microsecond=0,
+                    )
+            else:
+                return "unknown"
+            return next_ts.strftime("%Y-%m-%d %H:%M UTC")
+
         await update.message.reply_text(
             "OpenRouter key usage (this specific API key):\n"
             f"Key label: <code>{html.escape(str(label))}</code>\n"
@@ -331,6 +372,8 @@ async def cmd_openrouter_balance(update: Update, ctx: ContextTypes.DEFAULT_TYPE)
             f"Usage this week (UTC): <code>{html.escape(_fmt_2(usage_weekly))}</code>\n"
             f"Usage this month (UTC): <code>{html.escape(_fmt_2(usage_monthly))}</code>\n"
             f"Key limit: <code>{html.escape(_fmt_2(limit))}</code>\n"
+            f"Limit reset cycle: <code>{html.escape(str(limit_reset))}</code>\n"
+            f"Next reset (UTC): <code>{html.escape(_next_reset_utc(limit_reset))}</code>\n"
             f"Key remaining: <code>{html.escape(_fmt_2(limit_remaining))}</code>\n"
             f"Free tier key: <code>{html.escape(str(free_tier))}</code>",
             parse_mode="HTML",

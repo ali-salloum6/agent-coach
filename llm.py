@@ -133,6 +133,7 @@ async def get_openrouter_key_info() -> dict:
             "usage_weekly": payload.get("usage_weekly"),
             "usage_monthly": payload.get("usage_monthly"),
             "limit": payload.get("limit"),
+            "limit_reset": payload.get("limit_reset"),
             "limit_remaining": payload.get("limit_remaining"),
             "is_free_tier": payload.get("is_free_tier"),
             "is_management_key": payload.get("is_management_key"),
