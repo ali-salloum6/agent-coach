@@ -15,6 +15,8 @@ _allowed_id = os.environ.get("TELEGRAM_ALLOWED_USER_ID", "").strip()
 ALLOWED_USER_ID = int(_allowed_id) if _allowed_id else None
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_CREDITS_URL = "https://openrouter.ai/api/v1/credits"
+OPENROUTER_KEY_INFO_URL = "https://openrouter.ai/api/v1/key"
 
 DEFAULT_MODEL = "google/gemini-3.1-pro-preview"
 SUMMARIZATION_MODEL = DEFAULT_MODEL
