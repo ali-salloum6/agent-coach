@@ -318,19 +318,20 @@ async def cmd_openrouter_balance(update: Update, ctx: ContextTypes.DEFAULT_TYPE)
         label = info.get("label")
         free_tier = info.get("is_free_tier")
 
-        limit_remaining_text = "N/A"
-        if isinstance(limit_remaining, (int, float)):
-            limit_remaining_text = f"{limit_remaining:.2f}"
+        def _fmt_2(value: object) -> str:
+            if isinstance(value, (int, float)):
+                return f"{value:.2f}"
+            return str(value)
 
         await update.message.reply_text(
             "OpenRouter key usage (this specific API key):\n"
             f"Key label: <code>{html.escape(str(label))}</code>\n"
-            f"Usage total: <code>{html.escape(str(usage))}</code>\n"
-            f"Usage today (UTC): <code>{html.escape(str(usage_daily))}</code>\n"
-            f"Usage this week (UTC): <code>{html.escape(str(usage_weekly))}</code>\n"
-            f"Usage this month (UTC): <code>{html.escape(str(usage_monthly))}</code>\n"
-            f"Key limit: <code>{html.escape(str(limit))}</code>\n"
-            f"Key remaining: <code>{html.escape(limit_remaining_text)}</code>\n"
+            f"Usage total: <code>{html.escape(_fmt_2(usage))}</code>\n"
+            f"Usage today (UTC): <code>{html.escape(_fmt_2(usage_daily))}</code>\n"
+            f"Usage this week (UTC): <code>{html.escape(_fmt_2(usage_weekly))}</code>\n"
+            f"Usage this month (UTC): <code>{html.escape(_fmt_2(usage_monthly))}</code>\n"
+            f"Key limit: <code>{html.escape(_fmt_2(limit))}</code>\n"
+            f"Key remaining: <code>{html.escape(_fmt_2(limit_remaining))}</code>\n"
             f"Free tier key: <code>{html.escape(str(free_tier))}</code>",
             parse_mode="HTML",
         )
