@@ -9,6 +9,7 @@ import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+import httpx
 from telegram import BotCommand, Update
 from telegram.ext import (
     ApplicationBuilder,
@@ -47,6 +48,57 @@ def _markdown_to_telegram_html(text: str) -> str:
     text = re.sub(r"^## (.+)$", r"<b>\1</b>", text, flags=re.MULTILINE)
     text = re.sub(r"^# (.+)$", r"<b>\1</b>", text, flags=re.MULTILINE)
     return text
+
+
+def _truncate_for_telegram(text: str, max_len: int = 350) -> str:
+    text = text.strip().replace("\r", " ").replace("\n", " ")
+    if len(text) <= max_len:
+        return text
+    return text[:max_len] + "…"
+
+
+def _format_openrouter_http_error_for_telegram(
+    e: httpx.HTTPStatusError,
+    *,
+    model: str | None,
+) -> str:
+    status = e.response.status_code
+
+    hint_by_status: dict[int, str] = {
+        402: "OpenRouter billing error: insufficient credits (HTTP 402).",
+        401: "OpenRouter authentication failed (HTTP 401). Check `OPENROUTER_API_KEY`.",
+        403: "OpenRouter request forbidden (HTTP 403). Check whether this API key has access.",
+        429: "OpenRouter rate limited your request (HTTP 429). Try again in a bit or use `/cheap`.",
+    }
+    hint = hint_by_status.get(status, f"OpenRouter returned HTTP {status} (request failed).")
+
+    details = ""
+    try:
+        data = e.response.json()
+        if isinstance(data, dict):
+            err = data.get("error")
+            if isinstance(err, dict) and isinstance(err.get("message"), str):
+                details = err["message"]
+            elif isinstance(data.get("message"), str):
+                details = data["message"]
+    except Exception:
+        pass
+    if not details:
+        details = (e.response.text or "")
+
+    model_label = html.escape(str(model)) if model else ""
+    details_short = _truncate_for_telegram(details)
+
+    extra = ""
+    if status == 402:
+        extra = "\nRun `/openrouter_balance` to check your remaining credits."
+
+    return (
+        f"{hint}{extra}\n"
+        f"Model: <code>{model_label}</code>\n"
+        f"Details: <code>{html.escape(details_short)}</code>"
+    )
+
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -110,7 +162,8 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         "/forget — wipe memory (backs up first)\n"
         "/summarize — condense memory (backs up first)\n"
         "/model &lt;slug&gt; — switch LLM model\n"
-        "/cheap — use 3.1 flash lite (cheaper)\n\n"
+        "/cheap — use 3.1 flash lite (cheaper)\n"
+        "/openrouter_balance — check OpenRouter remaining credits\n\n"
         f"Current model: <code>{model}</code>",
         parse_mode="HTML",
     )
@@ -249,6 +302,46 @@ async def cmd_cheap(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+async def cmd_openrouter_balance(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_allowed_user(update):
+        return
+    await update.message.reply_text("Checking usage for your current OpenRouter API key…")
+
+    try:
+        info = await llm.get_openrouter_key_info()
+        usage = info.get("usage")
+        usage_daily = info.get("usage_daily")
+        usage_weekly = info.get("usage_weekly")
+        usage_monthly = info.get("usage_monthly")
+        limit = info.get("limit")
+        limit_remaining = info.get("limit_remaining")
+        label = info.get("label")
+        free_tier = info.get("is_free_tier")
+
+        limit_remaining_text = "N/A"
+        if isinstance(limit_remaining, (int, float)):
+            limit_remaining_text = f"{limit_remaining:.2f}"
+
+        await update.message.reply_text(
+            "OpenRouter key usage (this specific API key):\n"
+            f"Key label: <code>{html.escape(str(label))}</code>\n"
+            f"Usage total: <code>{html.escape(str(usage))}</code>\n"
+            f"Usage today (UTC): <code>{html.escape(str(usage_daily))}</code>\n"
+            f"Usage this week (UTC): <code>{html.escape(str(usage_weekly))}</code>\n"
+            f"Usage this month (UTC): <code>{html.escape(str(usage_monthly))}</code>\n"
+            f"Key limit: <code>{html.escape(str(limit))}</code>\n"
+            f"Key remaining: <code>{html.escape(limit_remaining_text)}</code>\n"
+            f"Free tier key: <code>{html.escape(str(free_tier))}</code>",
+            parse_mode="HTML",
+        )
+    except httpx.HTTPStatusError as e:
+        msg = _format_openrouter_http_error_for_telegram(e, model="key-info")
+        await update.message.reply_text(msg, parse_mode="HTML")
+    except Exception:
+        log.exception("OpenRouter key usage check failed")
+        await update.message.reply_text("Failed to check OpenRouter key usage. Try again later.")
+
+
 async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_allowed_user(update):
         return
@@ -304,7 +397,7 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
             pending_chars = 0
             last_flush_at = now
 
-    except Exception:
+    except Exception as exc:
         if not reply_parts:
             log.exception("LLM stream failed, trying non-stream fallback")
             try:
@@ -314,9 +407,24 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
                     web_search=session["web_search"],
                     response_meta=response_meta,
                 )
+            except httpx.HTTPStatusError as e:
+                msg = _format_openrouter_http_error_for_telegram(
+                    e, model=session.get("model")
+                )
+                await update.message.reply_text(msg, parse_mode="HTML")
+                session["history"].pop()
+                return
             except Exception:
                 log.exception("LLM call failed")
-                await update.message.reply_text("Something went wrong talking to the model. Try again.")
+                if isinstance(exc, httpx.HTTPStatusError):
+                    msg = _format_openrouter_http_error_for_telegram(
+                        exc, model=session.get("model")
+                    )
+                    await update.message.reply_text(msg, parse_mode="HTML")
+                else:
+                    await update.message.reply_text(
+                        "Something went wrong talking to the model. Try again."
+                    )
                 session["history"].pop()
                 return
         else:
@@ -399,6 +507,7 @@ BOT_COMMANDS = [
     BotCommand("summarize", "Condense memory (backs up first)"),
     BotCommand("model", "Switch LLM model"),
     BotCommand("cheap", "Use 3.1 flash lite (cheaper)"),
+    BotCommand("openrouter_balance", "Check OpenRouter remaining credits"),
 ]
 
 
@@ -418,6 +527,7 @@ def main() -> None:
     app.add_handler(CommandHandler("summarize", cmd_summarize))
     app.add_handler(CommandHandler("model", cmd_model))
     app.add_handler(CommandHandler("cheap", cmd_cheap))
+    app.add_handler(CommandHandler("openrouter_balance", cmd_openrouter_balance))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     app.post_init = _set_commands

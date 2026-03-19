@@ -51,6 +51,7 @@ A Telegram bot that acts as a long-term AI assistant with persistent memory. Fir
 | `/summarize` | Condense memory (backs up first; uses gemini-3.1-pro-preview; no fallback) |
 | `/model <slug>` | Switch model: `mid` / `cheap` / `max`, or a full OpenRouter model slug |
 | `/cheap` | Shortcut to switch to the cheap model (gemini-3.1-flash-lite) |
+| `/openrouter_balance` | Check usage and remaining limit for the current `OPENROUTER_API_KEY` |
 
 ## How memory works
 

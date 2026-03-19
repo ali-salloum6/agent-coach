@@ -79,6 +79,67 @@ async def chat(
             return data["choices"][0]["message"]["content"]
 
 
+async def get_openrouter_credits() -> dict:
+    """
+    Query OpenRouter account credits.
+    """
+    headers = {
+        "Authorization": f"Bearer {config.OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(config.OPENROUTER_CREDITS_URL, headers=headers)
+        if resp.is_error:
+            log.error(
+                "OpenRouter credits %s: %s",
+                resp.status_code,
+                resp.text[:500] if resp.text else "",
+            )
+            resp.raise_for_status()
+        data = resp.json()
+        credits = (data.get("data") or {})
+        return {
+            "total_credits": credits.get("total_credits"),
+            "total_usage": credits.get("total_usage"),
+            "raw": data,
+        }
+
+
+async def get_openrouter_key_info() -> dict:
+    """
+    Query OpenRouter key-scoped usage for the current API key.
+
+    This endpoint is scoped to the exact bearer key used in Authorization.
+    """
+    headers = {
+        "Authorization": f"Bearer {config.OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(config.OPENROUTER_KEY_INFO_URL, headers=headers)
+        if resp.is_error:
+            log.error(
+                "OpenRouter key info %s: %s",
+                resp.status_code,
+                resp.text[:500] if resp.text else "",
+            )
+            resp.raise_for_status()
+        data = resp.json()
+        payload = data.get("data") or {}
+        return {
+            "label": payload.get("label"),
+            "usage": payload.get("usage"),
+            "usage_daily": payload.get("usage_daily"),
+            "usage_weekly": payload.get("usage_weekly"),
+            "usage_monthly": payload.get("usage_monthly"),
+            "limit": payload.get("limit"),
+            "limit_remaining": payload.get("limit_remaining"),
+            "is_free_tier": payload.get("is_free_tier"),
+            "is_management_key": payload.get("is_management_key"),
+            "raw": data,
+        }
+
+
 async def _chat_stream_attempt(
     messages: list[dict],
     model: str,
