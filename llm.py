@@ -18,6 +18,9 @@ def _build_request_body(messages: list[dict], model: str, web_search: bool) -> d
     }
     if web_search:
         body["plugins"] = [{"id": "web"}]
+    # OpenRouter: maps effort → Google thinkingLevel for Gemini 3.x; skip for non-Google fallbacks.
+    if model.startswith("google/"):
+        body["reasoning"] = {"effort": "medium"}
     return body
 
 
