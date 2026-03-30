@@ -466,9 +466,18 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
                     )
                     await update.message.reply_text(msg, parse_mode="HTML")
                 else:
-                    await update.message.reply_text(
-                        "Something went wrong talking to the model. Try again."
-                    )
+                    # If the provider returned an error-shaped payload, `llm.chat()`
+                    # raises a RuntimeError with a more specific OpenRouter message.
+                    if isinstance(exc, RuntimeError):
+                        provider_msg = str(exc).strip()
+                        provider_msg = provider_msg[:250]
+                        await update.message.reply_text(
+                            f"Model provider error: {provider_msg} Try again."
+                        )
+                    else:
+                        await update.message.reply_text(
+                            "Something went wrong talking to the model. Try again."
+                        )
                 session["history"].pop()
                 return
         else:

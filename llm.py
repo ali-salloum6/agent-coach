@@ -79,7 +79,47 @@ async def chat(
                     continue
                 resp.raise_for_status()
             data = resp.json()
-            return data["choices"][0]["message"]["content"]
+            try:
+                # OpenAI-style response (what we normally expect from OpenRouter).
+                choices = data["choices"]
+                return choices[0]["message"]["content"]
+            except (KeyError, IndexError, TypeError) as e:
+                # Providers sometimes return a success HTTP code but an error-shaped JSON
+                # that doesn't include `choices` (which would otherwise raise KeyError).
+                if isinstance(data, dict):
+                    if "error" in data:
+                        err = data.get("error") or {}
+                        if isinstance(err, dict):
+                            msg = (
+                                err.get("message")
+                                or err.get("type")
+                                or err.get("code")
+                                or "unknown provider error"
+                            )
+                        else:
+                            msg = str(err)
+                        log.error(
+                            "OpenRouter error payload for model=%s: %s",
+                            current_model,
+                            msg,
+                        )
+                        raise RuntimeError(f"OpenRouter error: {msg}") from e
+                    log.error(
+                        "OpenRouter response missing choices for model=%s. keys=%s body_preview=%s",
+                        current_model,
+                        list(data.keys()),
+                        resp.text[:500] if resp.text else "",
+                    )
+                else:
+                    log.error(
+                        "OpenRouter response not a JSON object for model=%s: type=%s body_preview=%s",
+                        current_model,
+                        type(data).__name__,
+                        resp.text[:500] if resp.text else "",
+                    )
+                raise RuntimeError(
+                    "OpenRouter response missing 'choices' (unexpected format)"
+                ) from e
 
 
 async def get_openrouter_credits() -> dict:
