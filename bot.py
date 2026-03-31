@@ -444,13 +444,27 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
     except Exception as exc:
         if not reply_parts:
             log.exception("LLM stream failed, trying non-stream fallback")
-            try:
-                reply = await llm.chat(
-                    messages=session["history"],
-                    model=session["model"],
-                    web_search=session["web_search"],
-                    response_meta=response_meta,
+            fallback_attempts = 2 if isinstance(exc, httpx.ReadError) else 1
+            if fallback_attempts > 1:
+                await update.message.reply_text(
+                    "Temporary network issue while contacting the model provider. Retrying once."
                 )
+            try:
+                for attempt in range(fallback_attempts):
+                    try:
+                        reply = await llm.chat(
+                            messages=session["history"],
+                            model=session["model"],
+                            web_search=session["web_search"],
+                            response_meta=response_meta,
+                        )
+                        break
+                    except httpx.ReadError:
+                        if attempt + 1 < fallback_attempts:
+                            log.warning("LLM non-stream fallback hit ReadError; retrying once")
+                            await asyncio.sleep(1.0)
+                            continue
+                        raise
             except httpx.HTTPStatusError as e:
                 msg = _format_openrouter_http_error_for_telegram(
                     e, model=session.get("model")
@@ -458,18 +472,22 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
                 await update.message.reply_text(msg, parse_mode="HTML")
                 session["history"].pop()
                 return
-            except Exception:
+            except Exception as fallback_exc:
                 log.exception("LLM call failed")
                 if isinstance(exc, httpx.HTTPStatusError):
                     msg = _format_openrouter_http_error_for_telegram(
                         exc, model=session.get("model")
                     )
                     await update.message.reply_text(msg, parse_mode="HTML")
+                elif isinstance(fallback_exc, httpx.ReadError):
+                    await update.message.reply_text(
+                        "Model provider connection dropped again after one retry. Please try again."
+                    )
                 else:
                     # If the provider returned an error-shaped payload, `llm.chat()`
                     # raises a RuntimeError with a more specific OpenRouter message.
-                    if isinstance(exc, RuntimeError):
-                        provider_msg = str(exc).strip()
+                    if isinstance(fallback_exc, RuntimeError):
+                        provider_msg = str(fallback_exc).strip()
                         provider_msg = provider_msg[:250]
                         await update.message.reply_text(
                             f"Model provider error: {provider_msg} Try again."
