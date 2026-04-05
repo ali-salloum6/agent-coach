@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import html
 import itertools
 import logging
 import re
 import time
+from io import BytesIO
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -19,7 +21,7 @@ from telegram.ext import (
     filters,
 )
 
-from telegram.error import BadRequest
+from telegram.error import BadRequest, TelegramError
 
 import config
 import llm
@@ -123,6 +125,9 @@ STREAM_FLUSH_INTERVAL_SECONDS = 0.25
 STREAM_FLUSH_MIN_CHARS = 24
 _draft_id_counter = itertools.count(start=int(time.time()))
 
+_album_lock = asyncio.Lock()
+_album_pending: dict[str, dict] = {}
+
 
 def _is_allowed_user(update: Update) -> bool:
     """True if no restriction is set, or the update is from the allowed user."""
@@ -164,6 +169,8 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         "/model &lt;slug&gt; — switch LLM model\n"
         "/cheap — use 3.1 flash lite (cheaper)\n"
         "/openrouter_balance — check OpenRouter remaining credits\n\n"
+        "Send <b>photos</b> or image files with optional captions; photo albums are "
+        "grouped into one message for the model.\n\n"
         f"Current model: <code>{model}</code>",
         parse_mode="HTML",
     )
@@ -386,25 +393,61 @@ async def cmd_openrouter_balance(update: Update, ctx: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("Failed to check OpenRouter key usage. Try again later.")
 
 
-async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _is_allowed_user(update):
-        return
-    user_text = update.message.text
-    if not user_text:
-        return
+async def _download_telegram_file(bot, file_id: str, *, max_bytes: int) -> bytes:
+    tg_file = await bot.get_file(file_id)
+    if tg_file.file_size is not None and tg_file.file_size > max_bytes:
+        raise ValueError(
+            f"File too large ({tg_file.file_size} bytes; max {max_bytes // (1024 * 1024)} MB)."
+        )
+    buf = BytesIO()
+    await tg_file.download_to_memory(buf)
+    data = buf.getvalue()
+    if len(data) > max_bytes:
+        raise ValueError(
+            f"Downloaded file too large ({len(data)} bytes; max {max_bytes // (1024 * 1024)} MB)."
+        )
+    return data
 
-    ts = datetime.now(ZoneInfo("Europe/Moscow")).strftime("%Y-%m-%d %H:%M Moscow")
-    session["history"].append({
-        "role": "user",
-        "content": f"[Sent at {ts}]\n\n{user_text}",
-    })
+
+def _openrouter_image_part(raw: bytes, mime_type: str) -> dict:
+    b64 = base64.standard_b64encode(raw).decode("ascii")
+    return {
+        "type": "image_url",
+        "image_url": {"url": f"data:{mime_type};base64,{b64}"},
+    }
+
+
+def _vision_memory_summary(ts: str, captions: list[str | None]) -> str:
+    lines = [
+        f"[Sent at {ts} Moscow]",
+        f"User sent {len(captions)} image(s).",
+    ]
+    for i, cap in enumerate(captions, start=1):
+        c = (cap or "").strip()
+        lines.append(f"Image {i} caption: {c if c else '(none)'}")
+    return "\n".join(lines)
+
+
+async def _conversation_reply(
+    update: Update,
+    ctx: ContextTypes.DEFAULT_TYPE,
+    *,
+    user_content: str | list,
+    memory_user_text: str,
+    stream: bool,
+    web_search: bool,
+    allow_fallback: bool,
+) -> None:
+    """Append user turn, call the model, send reply, schedule memory extraction."""
+    session["history"].append({"role": "user", "content": user_content})
 
     await update.message.chat.send_action("typing")
 
     reply_parts: list[str] = []
     chat_id = update.effective_chat.id if update.effective_chat else None
     can_stream_draft = (
-        chat_id is not None
+        stream
+        and chat_id is not None
         and update.effective_chat is not None
         and update.effective_chat.type == "private"
     )
@@ -413,82 +456,84 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
     last_flush_at = loop.time()
     pending_chars = 0
     response_meta: dict = {}
+    reply: str | None = None
 
-    try:
-        async for delta in llm.chat_stream(
-            messages=session["history"],
-            model=session["model"],
-            web_search=session["web_search"],
-            response_meta=response_meta,
-        ):
-            reply_parts.append(delta)
-            pending_chars += len(delta)
+    if stream:
+        try:
+            async for delta in llm.chat_stream(
+                messages=session["history"],
+                model=session["model"],
+                web_search=web_search,
+                response_meta=response_meta,
+                allow_fallback=allow_fallback,
+            ):
+                reply_parts.append(delta)
+                pending_chars += len(delta)
 
-            if not can_stream_draft:
-                continue
+                if not can_stream_draft:
+                    continue
 
-            now = loop.time()
-            should_flush = (
-                pending_chars >= STREAM_FLUSH_MIN_CHARS
-                or (now - last_flush_at) >= STREAM_FLUSH_INTERVAL_SECONDS
-            )
-            if not should_flush:
-                continue
-
-            partial_text = "".join(reply_parts)[:MAX_TG_LEN]
-            if partial_text.strip():
-                can_stream_draft = await _send_draft(ctx, chat_id, draft_id, partial_text)
-            pending_chars = 0
-            last_flush_at = now
-
-    except Exception as exc:
-        if not reply_parts:
-            log.exception("LLM stream failed, trying non-stream fallback")
-            fallback_attempts = 2 if isinstance(exc, httpx.ReadError) else 1
-            if fallback_attempts > 1:
-                await update.message.reply_text(
-                    "Temporary network issue while contacting the model provider. Retrying once."
+                now = loop.time()
+                should_flush = (
+                    pending_chars >= STREAM_FLUSH_MIN_CHARS
+                    or (now - last_flush_at) >= STREAM_FLUSH_INTERVAL_SECONDS
                 )
-            try:
-                for attempt in range(fallback_attempts):
-                    try:
-                        reply = await llm.chat(
-                            messages=session["history"],
-                            model=session["model"],
-                            web_search=session["web_search"],
-                            response_meta=response_meta,
-                        )
-                        break
-                    except httpx.ReadError:
-                        if attempt + 1 < fallback_attempts:
-                            log.warning("LLM non-stream fallback hit ReadError; retrying once")
-                            await asyncio.sleep(1.0)
-                            continue
-                        raise
-            except httpx.HTTPStatusError as e:
-                msg = _format_openrouter_http_error_for_telegram(
-                    e, model=session.get("model")
-                )
-                await update.message.reply_text(msg, parse_mode="HTML")
-                session["history"].pop()
-                return
-            except Exception as fallback_exc:
-                log.exception("LLM call failed")
-                if isinstance(exc, httpx.HTTPStatusError):
+                if not should_flush:
+                    continue
+
+                partial_text = "".join(reply_parts)[:MAX_TG_LEN]
+                if partial_text.strip():
+                    can_stream_draft = await _send_draft(ctx, chat_id, draft_id, partial_text)
+                pending_chars = 0
+                last_flush_at = now
+
+        except Exception as exc:
+            if not reply_parts:
+                log.exception("LLM stream failed, trying non-stream fallback")
+                fallback_attempts = 2 if isinstance(exc, httpx.ReadError) else 1
+                if fallback_attempts > 1:
+                    await update.message.reply_text(
+                        "Temporary network issue while contacting the model provider. Retrying once."
+                    )
+                try:
+                    for attempt in range(fallback_attempts):
+                        try:
+                            reply = await llm.chat(
+                                messages=session["history"],
+                                model=session["model"],
+                                web_search=web_search,
+                                response_meta=response_meta,
+                                allow_fallback=allow_fallback,
+                            )
+                            break
+                        except httpx.ReadError:
+                            if attempt + 1 < fallback_attempts:
+                                log.warning(
+                                    "LLM non-stream fallback hit ReadError; retrying once"
+                                )
+                                await asyncio.sleep(1.0)
+                                continue
+                            raise
+                except httpx.HTTPStatusError as e:
                     msg = _format_openrouter_http_error_for_telegram(
-                        exc, model=session.get("model")
+                        e, model=session.get("model")
                     )
                     await update.message.reply_text(msg, parse_mode="HTML")
-                elif isinstance(fallback_exc, httpx.ReadError):
-                    await update.message.reply_text(
-                        "Model provider connection dropped again after one retry. Please try again."
-                    )
-                else:
-                    # If the provider returned an error-shaped payload, `llm.chat()`
-                    # raises a RuntimeError with a more specific OpenRouter message.
-                    if isinstance(fallback_exc, RuntimeError):
-                        provider_msg = str(fallback_exc).strip()
-                        provider_msg = provider_msg[:250]
+                    session["history"].pop()
+                    return
+                except Exception as fallback_exc:
+                    log.exception("LLM call failed")
+                    if isinstance(exc, httpx.HTTPStatusError):
+                        msg = _format_openrouter_http_error_for_telegram(
+                            exc, model=session.get("model")
+                        )
+                        await update.message.reply_text(msg, parse_mode="HTML")
+                    elif isinstance(fallback_exc, httpx.ReadError):
+                        await update.message.reply_text(
+                            "Model provider connection dropped again after one retry. Please try again."
+                        )
+                    elif isinstance(fallback_exc, RuntimeError):
+                        provider_msg = str(fallback_exc).strip()[:250]
                         await update.message.reply_text(
                             f"Model provider error: {provider_msg} Try again."
                         )
@@ -496,21 +541,100 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
                         await update.message.reply_text(
                             "Something went wrong talking to the model. Try again."
                         )
-                session["history"].pop()
-                return
+                    session["history"].pop()
+                    return
+            else:
+                log.exception("LLM stream failed mid-response, using collected partial reply")
+                reply = "".join(reply_parts)
         else:
-            log.exception("LLM stream failed mid-response, using collected partial reply")
+            if can_stream_draft and pending_chars > 0:
+                partial_text = "".join(reply_parts)[:MAX_TG_LEN]
+                if partial_text.strip():
+                    await _send_draft(ctx, chat_id, draft_id, partial_text)
             reply = "".join(reply_parts)
     else:
-        if can_stream_draft and pending_chars > 0:
-            partial_text = "".join(reply_parts)[:MAX_TG_LEN]
-            if partial_text.strip():
-                await _send_draft(ctx, chat_id, draft_id, partial_text)
-        reply = "".join(reply_parts)
+        try:
+            reply = await llm.chat(
+                messages=session["history"],
+                model=session["model"],
+                web_search=web_search,
+                response_meta=response_meta,
+                allow_fallback=allow_fallback,
+            )
+        except httpx.HTTPStatusError as e:
+            msg = _format_openrouter_http_error_for_telegram(e, model=session.get("model"))
+            await update.message.reply_text(msg, parse_mode="HTML")
+            session["history"].pop()
+            return
+        except httpx.ReadError:
+            log.exception("LLM call failed (ReadError), retrying once")
+            await update.message.reply_text(
+                "Temporary network issue while contacting the model provider. Retrying once."
+            )
+            try:
+                await asyncio.sleep(1.0)
+                reply = await llm.chat(
+                    messages=session["history"],
+                    model=session["model"],
+                    web_search=web_search,
+                    response_meta=response_meta,
+                    allow_fallback=allow_fallback,
+                )
+            except httpx.ReadError:
+                log.exception("LLM call failed after retry")
+                await update.message.reply_text(
+                    "Model provider connection dropped again after one retry. Please try again."
+                )
+                session["history"].pop()
+                return
+            except httpx.HTTPStatusError as e:
+                msg = _format_openrouter_http_error_for_telegram(
+                    e, model=session.get("model")
+                )
+                await update.message.reply_text(msg, parse_mode="HTML")
+                session["history"].pop()
+                return
+            except Exception as e:
+                log.exception("LLM call failed after ReadError retry")
+                if isinstance(e, RuntimeError):
+                    provider_msg = str(e).strip()[:250]
+                    await update.message.reply_text(
+                        f"Model provider error: {provider_msg} Try again."
+                    )
+                else:
+                    await update.message.reply_text(
+                        "Something went wrong talking to the model. Try again."
+                    )
+                session["history"].pop()
+                return
+        except RuntimeError as e:
+            log.exception("LLM call failed (provider error)")
+            provider_msg = str(e).strip()[:250]
+            await update.message.reply_text(
+                f"Model provider error: {provider_msg} Try again."
+            )
+            session["history"].pop()
+            return
+        except Exception:
+            log.exception("LLM call failed")
+            await update.message.reply_text(
+                "Something went wrong talking to the model. Try again."
+            )
+            session["history"].pop()
+            return
 
+    assert reply is not None
     if not reply:
         reply = "(empty response)"
     session["history"].append({"role": "assistant", "content": reply})
+
+    if isinstance(user_content, list) and len(session["history"]) >= 2:
+        prev = session["history"][-2]
+        if prev.get("role") == "user" and prev.get("content") is user_content:
+            prev["content"] = (
+                memory_user_text
+                + "\n\n(Images were attached; the model saw them for this reply only.)"
+            )
 
     await _send_reply(update, reply)
 
@@ -522,7 +646,190 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
             parse_mode="HTML",
         )
 
-    asyncio.create_task(_background_extract(user_text, reply))
+    asyncio.create_task(_background_extract(memory_user_text, reply))
+
+
+async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_allowed_user(update):
+        return
+    user_text = update.message.text
+    if not user_text:
+        return
+
+    ts = datetime.now(ZoneInfo("Europe/Moscow")).strftime("%Y-%m-%d %H:%M Moscow")
+    await _conversation_reply(
+        update,
+        ctx,
+        user_content=f"[Sent at {ts}]\n\n{user_text}",
+        memory_user_text=user_text,
+        stream=True,
+        web_search=session["web_search"],
+        allow_fallback=True,
+    )
+
+
+async def _media_group_flush_worker(key: str, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    try:
+        await asyncio.sleep(config.MEDIA_GROUP_DEBOUNCE_SEC)
+    except asyncio.CancelledError:
+        return
+    async with _album_lock:
+        state = _album_pending.pop(key, None)
+    if not state:
+        return
+    update = state["last_update"]
+    items: list[dict] = state["items"]
+    try:
+        await _handle_image_bundle(ctx, update, items)
+    except Exception:
+        log.exception("Failed to process media group")
+        try:
+            await update.message.reply_text(
+                "Something went wrong processing your images. Try again or send fewer images."
+            )
+        except Exception:
+            log.exception("Could not send media group error reply")
+
+
+async def _enqueue_album_item(
+    key: str,
+    item: dict,
+    update: Update,
+    ctx: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    async with _album_lock:
+        if key not in _album_pending:
+            _album_pending[key] = {"items": [], "task": None, "last_update": update}
+        st = _album_pending[key]
+        st["items"].append(item)
+        st["last_update"] = update
+        if st["task"] is not None:
+            st["task"].cancel()
+            st["task"] = None
+        st["task"] = asyncio.create_task(_media_group_flush_worker(key, ctx))
+
+
+async def _handle_image_bundle(
+    ctx: ContextTypes.DEFAULT_TYPE,
+    update: Update,
+    items: list[dict],
+) -> None:
+    if not _is_allowed_user(update):
+        return
+    if len(items) > config.MAX_VISION_IMAGES:
+        await update.message.reply_text(
+            f"Too many images in one batch (max {config.MAX_VISION_IMAGES}). "
+            "Send fewer images or split into multiple messages."
+        )
+        return
+
+    ts = datetime.now(ZoneInfo("Europe/Moscow")).strftime("%Y-%m-%d %H:%M Moscow")
+    captions: list[str | None] = [it.get("caption") for it in items]
+    memory_user_text = _vision_memory_summary(ts, captions)
+
+    content_parts: list[dict] = []
+    preamble_lines = [
+        f"[Sent at {ts} Moscow]",
+        f"The user attached {len(items)} image(s).",
+    ]
+    for i, it in enumerate(items, start=1):
+        cap = (it.get("caption") or "").strip()
+        if cap:
+            preamble_lines.append(f"Image {i} caption: {cap}")
+        else:
+            preamble_lines.append(f"Image {i}: (no caption)")
+    content_parts.append({"type": "text", "text": "\n".join(preamble_lines)})
+
+    total_bytes = 0
+    for idx, it in enumerate(items, start=1):
+        file_id = it["file_id"]
+        mime = it.get("mime_type") or "image/jpeg"
+        try:
+            raw = await _download_telegram_file(
+                ctx.bot,
+                file_id,
+                max_bytes=config.MAX_IMAGE_BYTES,
+            )
+        except ValueError as e:
+            log.warning("Image %s rejected: %s", idx, e)
+            await update.message.reply_text(
+                f"Image {idx} is too large or invalid: {e} "
+                f"(max {config.MAX_IMAGE_BYTES // (1024 * 1024)} MB per file)."
+            )
+            return
+        except TelegramError:
+            log.exception("Telegram file download failed for image %s", idx)
+            await update.message.reply_text(
+                f"Could not download image {idx} from Telegram. Try again."
+            )
+            return
+        except Exception:
+            log.exception("Unexpected error downloading image %s", idx)
+            await update.message.reply_text(
+                f"Could not download image {idx}. Try again."
+            )
+            return
+        total_bytes += len(raw)
+        if total_bytes > config.MAX_VISION_PAYLOAD_BYTES:
+            await update.message.reply_text(
+                "Combined image size is too large for one request. "
+                "Send fewer or smaller images."
+            )
+            return
+        content_parts.append(_openrouter_image_part(raw, mime))
+
+    await _conversation_reply(
+        update,
+        ctx,
+        user_content=content_parts,
+        memory_user_text=memory_user_text,
+        stream=False,
+        web_search=False,
+        allow_fallback=False,
+    )
+
+
+def _media_item_from_message(message) -> dict | None:
+    if message.photo:
+        return {
+            "kind": "photo",
+            "file_id": message.photo[-1].file_id,
+            "caption": message.caption,
+            "mime_type": "image/jpeg",
+        }
+    if message.document and message.document.mime_type:
+        if not str(message.document.mime_type).startswith("image/"):
+            return None
+        return {
+            "kind": "document",
+            "file_id": message.document.file_id,
+            "caption": message.caption,
+            "mime_type": message.document.mime_type,
+        }
+    return None
+
+
+async def handle_media(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_allowed_user(update):
+        return
+    message = update.message
+    if not message:
+        return
+    item = _media_item_from_message(message)
+    if not item:
+        return
+
+    chat = update.effective_chat
+    if not chat:
+        return
+
+    mg_id = message.media_group_id
+    if mg_id is None:
+        await _handle_image_bundle(ctx, update, [item])
+        return
+
+    key = f"{chat.id}:{mg_id}"
+    await _enqueue_album_item(key, item, update, ctx)
 
 
 async def _send_draft(
@@ -599,6 +906,12 @@ def main() -> None:
     app.add_handler(CommandHandler("model", cmd_model))
     app.add_handler(CommandHandler("cheap", cmd_cheap))
     app.add_handler(CommandHandler("openrouter_balance", cmd_openrouter_balance))
+    app.add_handler(
+        MessageHandler(
+            (filters.PHOTO | filters.Document.IMAGE) & ~filters.COMMAND,
+            handle_media,
+        )
+    )
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     app.post_init = _set_commands

@@ -32,3 +32,11 @@ RATE_LIMIT_FALLBACK: dict[str, str] = {
 
 DATA_DIR = Path(__file__).parent / "data"
 DATA_DIR.mkdir(exist_ok=True)
+
+# Vision / Telegram media (per user turn)
+MAX_VISION_IMAGES = int(os.environ.get("MAX_VISION_IMAGES", "10"))
+MAX_IMAGE_BYTES = int(os.environ.get("MAX_IMAGE_BYTES", str(5 * 1024 * 1024)))
+MAX_VISION_PAYLOAD_BYTES = int(
+    os.environ.get("MAX_VISION_PAYLOAD_BYTES", str(20 * 1024 * 1024))
+)
+MEDIA_GROUP_DEBOUNCE_SEC = float(os.environ.get("MEDIA_GROUP_DEBOUNCE_SEC", "1.2"))

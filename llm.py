@@ -11,6 +11,26 @@ import config
 log = logging.getLogger(__name__)
 
 
+def _assistant_content_to_text(content: object) -> str:
+    """Normalize OpenRouter/OpenAI message.content (str or multimodal parts) to plain text."""
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict):
+                if block.get("type") == "text" and isinstance(block.get("text"), str):
+                    parts.append(block["text"])
+                elif block.get("type") == "text":
+                    parts.append(str(block.get("text", "")))
+        return "".join(parts)
+    return str(content)
+
+
 def _build_request_body(messages: list[dict], model: str, web_search: bool) -> dict:
     body: dict = {
         "model": model,
@@ -82,7 +102,8 @@ async def chat(
             try:
                 # OpenAI-style response (what we normally expect from OpenRouter).
                 choices = data["choices"]
-                return choices[0]["message"]["content"]
+                raw_content = choices[0]["message"]["content"]
+                return _assistant_content_to_text(raw_content)
             except (KeyError, IndexError, TypeError) as e:
                 # Providers sometimes return a success HTTP code but an error-shaped JSON
                 # that doesn't include `choices` (which would otherwise raise KeyError).
@@ -237,8 +258,19 @@ async def _chat_stream_attempt(
                     continue
                 delta = choices[0].get("delta") or {}
                 content = delta.get("content")
-                if content:
+                if not content:
+                    continue
+                if isinstance(content, str):
                     yield content
+                elif isinstance(content, list):
+                    for block in content:
+                        if not isinstance(block, dict):
+                            continue
+                        if block.get("type") != "text":
+                            continue
+                        text = block.get("text")
+                        if text:
+                            yield text
 
 
 async def chat_stream(
