@@ -102,6 +102,81 @@ def _format_openrouter_http_error_for_telegram(
     )
 
 
+def _format_openrouter_runtime_error_for_telegram(
+    exc: RuntimeError,
+    *,
+    model: str | None,
+    after_stream_failure: bool = False,
+) -> str:
+    """User-facing explanation for llm.chat / chat_stream RuntimeError paths."""
+    raw = str(exc).strip()
+    stream_detail: str | None = None
+    api_detail: str | None = None
+    if raw.startswith("OpenRouter stream error: "):
+        stream_detail = raw[len("OpenRouter stream error: ") :].strip()
+    elif raw.startswith("OpenRouter error: "):
+        api_detail = raw[len("OpenRouter error: ") :].strip()
+
+    detail = (stream_detail or api_detail or raw).strip()
+    detail_lower = detail.lower()
+    raw_lower = raw.lower()
+
+    if "missing 'choices'" in raw_lower or "unexpected format" in raw_lower:
+        headline = (
+            "The provider returned a response the bot could not parse (no normal "
+            "<code>choices</code> field). Often this is an error payload in disguise."
+        )
+        hint = (
+            "Try again in a moment, or switch model with <code>/model</code>. "
+            "If it keeps happening, check <a href=\"https://openrouter.ai/status\">OpenRouter status</a>."
+        )
+    elif "internal server error" in detail_lower or any(
+        x in detail_lower for x in ("502", "503", "504", "bad gateway", "gateway timeout")
+    ):
+        headline = (
+            "The model provider (OpenRouter or the upstream host, e.g. Google) hit a "
+            "<b>temporary server error</b>. Your request did not succeed on their side."
+        )
+        hint = (
+            "Wait a minute and try again, use <code>/model</code> to pick another model, "
+            "or <code>/cheap</code> for a lighter one. "
+            "<a href=\"https://openrouter.ai/status\">OpenRouter status</a>"
+        )
+    elif "provider returned error" in detail_lower:
+        headline = "The upstream provider reported an error for this request (not a bug in your message)."
+        hint = (
+            "Retry shortly or change model with <code>/model</code>. "
+            "<a href=\"https://openrouter.ai/status\">OpenRouter status</a>"
+        )
+    elif "rate limit" in detail_lower or "429" in detail_lower or "too many requests" in detail_lower:
+        headline = "The provider rate-limited this request."
+        hint = "Wait a bit, try <code>/cheap</code>, or add your own API key on OpenRouter for higher limits."
+    else:
+        headline = "The model provider returned an error."
+        hint = (
+            "Try again, or switch model with <code>/model</code>. "
+            "<a href=\"https://openrouter.ai/status\">OpenRouter status</a>"
+        )
+
+    parts = [headline, "", hint]
+    if after_stream_failure:
+        parts.extend(
+            [
+                "",
+                "<i>Note:</i> streaming failed first; a non-streaming retry failed too.",
+            ]
+        )
+    model_label = html.escape(str(model)) if model else "(unknown)"
+    parts.extend(
+        [
+            "",
+            f"Model: <code>{model_label}</code>",
+            f"Provider message: <code>{html.escape(_truncate_for_telegram(detail))}</code>",
+        ]
+    )
+    return "\n".join(parts)
+
+
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
@@ -533,10 +608,12 @@ async def _conversation_reply(
                             "Model provider connection dropped again after one retry. Please try again."
                         )
                     elif isinstance(fallback_exc, RuntimeError):
-                        provider_msg = str(fallback_exc).strip()[:250]
-                        await update.message.reply_text(
-                            f"Model provider error: {provider_msg} Try again."
+                        msg = _format_openrouter_runtime_error_for_telegram(
+                            fallback_exc,
+                            model=session.get("model"),
+                            after_stream_failure=True,
                         )
+                        await update.message.reply_text(msg, parse_mode="HTML")
                     else:
                         await update.message.reply_text(
                             "Something went wrong talking to the model. Try again."
@@ -597,10 +674,11 @@ async def _conversation_reply(
             except Exception as e:
                 log.exception("LLM call failed after ReadError retry")
                 if isinstance(e, RuntimeError):
-                    provider_msg = str(e).strip()[:250]
-                    await update.message.reply_text(
-                        f"Model provider error: {provider_msg} Try again."
+                    msg = _format_openrouter_runtime_error_for_telegram(
+                        e,
+                        model=session.get("model"),
                     )
+                    await update.message.reply_text(msg, parse_mode="HTML")
                 else:
                     await update.message.reply_text(
                         "Something went wrong talking to the model. Try again."
@@ -609,10 +687,11 @@ async def _conversation_reply(
                 return
         except RuntimeError as e:
             log.exception("LLM call failed (provider error)")
-            provider_msg = str(e).strip()[:250]
-            await update.message.reply_text(
-                f"Model provider error: {provider_msg} Try again."
+            msg = _format_openrouter_runtime_error_for_telegram(
+                e,
+                model=session.get("model"),
             )
+            await update.message.reply_text(msg, parse_mode="HTML")
             session["history"].pop()
             return
         except Exception:
