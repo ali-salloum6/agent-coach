@@ -6,6 +6,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
+# Optional HTTP(S) proxy for python-telegram-bot only (e.g. http://10.8.0.1:8888 via WireGuard + tinyproxy).
+TELEGRAM_HTTP_PROXY = os.environ.get("TELEGRAM_HTTP_PROXY", "").strip() or None
 OPENROUTER_API_KEY = os.environ["OPENROUTER_API_KEY"]
 ACTIVE_AGENT = os.environ.get("ACTIVE_AGENT", "gym_coach").strip() or "gym_coach"
 
