@@ -1,5 +1,7 @@
 # Live server access
 
+**Deployments:** change the repo locally, **commit**, **push**, then on the server `cd ~/repo/agent-coach && git pull` and **`systemctl restart agent-coach.service agent-german.service`**. Do not edit application code on the server outside git (env files under `EnvironmentFile` are the exception).
+
 To inspect or debug the production deployment:
 
 1. **SSH**: `ssh tae`
