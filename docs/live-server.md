@@ -1,0 +1,21 @@
+# Live server access
+
+To inspect or debug the production deployment:
+
+1. **SSH**: `ssh tae`
+2. **Repo** on the server: `~/repo/agent-coach` (same project as this repository)
+3. **systemd** — two services, both running `bot.py` from that repo with different env files:
+  - **Gym coach**: `agent-coach.service`
+  - **German exam coach**: `agent-german.service`
+
+Useful commands (on the server):
+
+```bash
+systemctl status agent-coach.service agent-german.service
+journalctl -u agent-coach.service -f
+journalctl -u agent-german.service -f
+```
+
+List related units: `systemctl list-units 'agent-*'`.
+
+Telegram traffic may use a **WireGuard + tinyproxy** path to Finland; see [outbound-proxy.md](outbound-proxy.md).

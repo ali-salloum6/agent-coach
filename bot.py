@@ -20,6 +20,7 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
+from telegram.request import HTTPXRequest
 
 from telegram.error import BadRequest, TelegramError
 
@@ -972,8 +973,27 @@ async def _set_commands(application) -> None:
     await application.bot.set_my_commands(BOT_COMMANDS)
 
 
+def _telegram_request() -> HTTPXRequest:
+    """HTTP client for Telegram Bot API. Longer timeouts help flaky or proxied paths."""
+    kwargs: dict = {
+        "read_timeout": 60.0,
+        "connect_timeout": 30.0,
+        "write_timeout": 30.0,
+        "media_write_timeout": 120.0,
+    }
+    if config.TELEGRAM_HTTP_PROXY:
+        kwargs["proxy"] = config.TELEGRAM_HTTP_PROXY
+        log.info("Telegram API client using HTTP proxy")
+    return HTTPXRequest(**kwargs)
+
+
 def main() -> None:
-    app = ApplicationBuilder().token(config.TELEGRAM_BOT_TOKEN).build()
+    app = (
+        ApplicationBuilder()
+        .token(config.TELEGRAM_BOT_TOKEN)
+        .request(_telegram_request())
+        .build()
+    )
 
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("new", cmd_new))
