@@ -316,9 +316,9 @@ async def cmd_memory(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     if not mem.strip():
         await update.message.reply_text("Memory is empty.")
         return
-    # Telegram messages max out at 4096 chars
+    # Telegram messages max out at 4096 chars — keep the end (most recent entries)
     if len(mem) > 4000:
-        mem = mem[:4000] + "\n\n…(truncated)"
+        mem = "…(earlier memory omitted)\n\n" + mem[-4000:]
     mem_html = _markdown_to_telegram_html(mem)
     try:
         await update.message.reply_text(mem_html, parse_mode="HTML")
