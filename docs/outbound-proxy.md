@@ -6,9 +6,11 @@ When direct HTTPS to `api.telegram.org` is unreliable (e.g. regional filtering),
 
 Set in the bot environment (e.g. `.env` or `EnvironmentFile` in systemd):
 
-| Variable | Meaning |
-|----------|---------|
+
+| Variable              | Meaning                                     |
+| --------------------- | ------------------------------------------- |
 | `TELEGRAM_HTTP_PROXY` | HTTP proxy URL, e.g. `http://10.8.0.1:8888` |
+
 
 If unset, the bot talks to Telegram without a proxy (previous behavior).
 
@@ -16,10 +18,12 @@ The bot uses `telegram.request.HTTPXRequest` with relaxed timeouts (`read` 60s, 
 
 ## Reference layout (this deployment)
 
-| Role | SSH alias | Notes |
-|------|-----------|--------|
-| Bot host | `tae` | Runs `agent-coach.service`, WireGuard **client** `wg0` → `10.8.0.2/24` |
-| Egress / proxy | `fin` | Finland VPS, WireGuard **server** `10.8.0.1/24`, UDP `51820`, **tinyproxy** on `10.8.0.1:8888` |
+
+| Role           | SSH alias | Notes                                                                                          |
+| -------------- | --------- | ---------------------------------------------------------------------------------------------- |
+| Bot host       | `tae`     | Runs `agent-coach.service`, WireGuard **client** `wg0` → `10.8.0.2/24`                         |
+| Egress / proxy | `fin`     | Finland VPS, WireGuard **server** `10.8.0.1/24`, UDP `51820`, **tinyproxy** on `10.8.0.1:8888` |
+
 
 WireGuard subnet: `10.8.0.0/24` (server `.1`, client `.2`). Only the bot’s WG address is allowed to use tinyproxy.
 
@@ -29,6 +33,8 @@ WireGuard subnet: `10.8.0.0/24` (server `.1`, client `.2`). Only the bot’s WG 
 - `/etc/wireguard/wg0.conf` — server key, `ListenPort 51820`, peer = bot’s public key, `AllowedIPs` for the client
 - `/etc/tinyproxy/tinyproxy.conf` — `Port 8888`, `Listen 10.8.0.1`, `Allow 10.8.0.2`, `Timeout 600`
 - `systemctl enable --now wg-quick@wg0 tinyproxy`
+
+**tinyproxy systemd drop-in** (`/etc/systemd/system/tinyproxy.service.d/wg-order-restart.conf`): `After=` and `Requires=` `wg-quick@wg0.service` so tinyproxy starts only after `10.8.0.1` exists; `Restart=on-failure`, `RestartSec=10`, and start limits to reduce crash loops. Recreate this file if you reinstall the `tinyproxy` package and lose the drop-in.
 
 Public endpoint for the tunnel: **UDP `185.231.206.8:51820`** (Finland; replace if the host changes).
 
