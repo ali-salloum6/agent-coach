@@ -220,6 +220,14 @@ def _is_allowed_user(update: Update) -> bool:
 
 
 def _reset_session(model: str | None = None) -> None:
+    # Prune expired recent notes BEFORE building the prompt so the model
+    # never sees stale TTL entries on a fresh conversation.
+    try:
+        pruned = memory.prune_recent(AGENT.slug)
+        if pruned:
+            log.info("Pruned %d expired recent notes on /new", pruned)
+    except Exception:
+        log.exception("Pruning recent notes failed (non-fatal)")
     mem = memory.load(AGENT.slug)
     system_prompt = AGENT.build_system_prompt(mem)
     session["model"] = model or AGENT.default_model
@@ -241,7 +249,6 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         "/remember &lt;text&gt; — save a note to memory\n"
         "/memory — show what I remember\n"
         "/forget — wipe memory (backs up first)\n"
-        "/summarize — condense memory (backs up first)\n"
         "/model &lt;slug&gt; — switch LLM model\n"
         "/cheap — use 3.1 flash lite (cheaper)\n"
         "/openrouter_balance — check OpenRouter remaining credits\n\n"
@@ -334,18 +341,6 @@ async def cmd_forget(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("Memory wiped. A backup was saved.")
     else:
         await update.message.reply_text("Nothing to forget — memory was already empty.")
-
-
-async def cmd_summarize(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _is_allowed_user(update):
-        return
-    await update.message.reply_text("Summarizing memory…")
-    try:
-        ok, msg = await memory.summarize(AGENT.slug)
-        await update.message.reply_text(msg)
-    except Exception:
-        log.exception("Summarize failed")
-        await update.message.reply_text("Summarization failed. Your memory was not changed.")
 
 
 async def cmd_model(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -962,7 +957,6 @@ BOT_COMMANDS = [
     BotCommand("remember", "Save a note to memory"),
     BotCommand("memory", "Show what I remember"),
     BotCommand("forget", "Wipe memory (backs up first)"),
-    BotCommand("summarize", "Condense memory (backs up first)"),
     BotCommand("model", "Switch LLM model"),
     BotCommand("cheap", "Use 3.1 flash lite (cheaper)"),
     BotCommand("openrouter_balance", "Check OpenRouter remaining credits"),
@@ -971,6 +965,12 @@ BOT_COMMANDS = [
 
 async def _set_commands(application) -> None:
     await application.bot.set_my_commands(BOT_COMMANDS)
+    try:
+        pruned = memory.prune_recent(AGENT.slug)
+        if pruned:
+            log.info("Pruned %d expired recent notes on startup", pruned)
+    except Exception:
+        log.exception("Startup prune of recent notes failed (non-fatal)")
 
 
 def _telegram_request() -> HTTPXRequest:
@@ -1001,7 +1001,6 @@ def main() -> None:
     app.add_handler(CommandHandler("remember", cmd_remember))
     app.add_handler(CommandHandler("memory", cmd_memory))
     app.add_handler(CommandHandler("forget", cmd_forget))
-    app.add_handler(CommandHandler("summarize", cmd_summarize))
     app.add_handler(CommandHandler("model", cmd_model))
     app.add_handler(CommandHandler("cheap", cmd_cheap))
     app.add_handler(CommandHandler("openrouter_balance", cmd_openrouter_balance))

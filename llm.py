@@ -64,16 +64,20 @@ async def chat(
     web_search: bool = False,
     response_meta: dict | None = None,
     allow_fallback: bool = True,
+    timeout_seconds: float = 120.0,
 ) -> str:
     """Send messages to OpenRouter and return the assistant's reply text.
     If response_meta is provided and a 429 fallback was used, sets
     response_meta["fallback_used"] = (original_model, fallback_model).
+    `timeout_seconds` controls the per-request httpx timeout (default 120s;
+    bumped to ~300s for the structured memory writer where Gemini Pro can
+    take longer when reasoning is medium/high).
     """
     headers = _request_headers()
     current_model = model
     requested_model = model
 
-    async with httpx.AsyncClient(timeout=120) as client:
+    async with httpx.AsyncClient(timeout=timeout_seconds) as client:
         while True:
             body = _build_request_body(messages, current_model, web_search)
             resp = await client.post(config.OPENROUTER_BASE_URL, json=body, headers=headers)
@@ -359,20 +363,106 @@ async def extract_memories(
     return stripped
 
 
-async def summarize_memory(existing_memory: str) -> str:
-    """Condense memory into a shorter markdown summary."""
+async def propose_memory_ops(
+    *,
+    user_message: str,
+    assistant_response: str,
+    current_snapshot: str,
+    active_issues: str,
+    active_plans: str,
+    recent_memory_visible: str,
+    timestamp_iso: str,
+    model: str | None = None,
+) -> str:
+    """Ask the writer model to propose strict JSON memory operations.
+
+    Returns the raw model text. The caller is responsible for validating it
+    via `memory_ops.validate(...)` — this function never mutates files.
+
+    Input deliberately excludes the full memory file: the validation dry
+    run showed that giving the writer huge context bloats cost and biases
+    it toward unsafe long-term plans. The answering model still receives
+    full curated memory; only the writer is kept narrow.
+    """
+    schema_block = (
+        "Allowed operations (return JSON object {\"ops\": [...]}; an empty list or"
+        " a single {\"op\":\"noop\"} both mean nothing worth saving):\n"
+        "- noop: nothing worth saving.\n"
+        "- add_recent_note: ephemeral facts useful today or this week only.\n"
+        "- add_measurement: dated numeric/semi-numeric observation (weight, sleep,"
+        " calories, protein, pain level, waist, workout result).\n"
+        "- add_current_fact: explicit current state, goal, constraint, injury,"
+        " routine, supplement, or durable preference stated by the user.\n"
+        "- add_event: meaningful dated event or milestone.\n"
+        "- add_plan: concrete assistant recommendation/protocol/plan.\n"
+        "- mark_adopted: user explicitly says they followed/adopted a previous plan."
+        " Provide target_ref quoting the existing plan text.\n"
+        "- supersede: user explicitly corrects or overrides a prior current state or"
+        " plan. Provide target_ref quoting the old item.\n"
+    )
+
+    required_fields = (
+        "Required fields for every non-noop op:\n"
+        "- op\n"
+        "- source: \"user\" or \"assistant\"\n"
+        "- date: YYYY-MM-DD if known, otherwise null\n"
+        "- summary: ONE atomic claim, max ~280 chars; do not bundle several facts\n"
+        "- evidence_quote: EXACT substring from the claimed source text\n"
+        "- retention: \"recent\", \"long_term\", or \"historical\"\n"
+        "- category: one of profile, goal, weight, sleep, nutrition, workout,"
+        " injury, pain, supplement, skin, measurement, mental_health, preference,"
+        " logistics, habit, rationale, milestone\n"
+        "Optional: value, unit, ttl_days (2|7|14|30), status"
+        " (proposed|active|adopted|superseded), target_ref."
+    )
+
+    rules = (
+        "Strict rules (the host will reject violations):\n"
+        "- source=\"user\" requires evidence_quote to be an exact substring of the USER MESSAGE.\n"
+        "- source=\"assistant\" requires evidence_quote to be an exact substring of the ASSISTANT REPLY.\n"
+        "- Never produce add_current_fact, mark_adopted, or supersede with source=assistant.\n"
+        "- Each op is ATOMIC: one claim per op. Split bundled facts into separate ops.\n"
+        "- Assistant plans for \"today/tonight/this evening/right now/this session\""
+        " are recent (ttl_days=2 or 7). Long-term plans are reserved for durable"
+        " rules/protocols (crisis protocol, injury safety rule, recurring supplement"
+        " protocol, exercise substitution rule, user-requested durable guidance).\n"
+        "- Exact meal items, restaurant/menu browsing, transient location/logistics"
+        " are recent. Daily totals and measurements are long-term.\n"
+        "- Do NOT save generic explanations or pep talk.\n"
+        "- Do NOT infer facts that are not explicitly stated.\n"
+        "- If you are uncertain, choose noop or recent over long_term.\n"
+        f"- Return at most {5} non-noop operations."
+    )
+
     prompt = (
-        "Summarize this memory file into a shorter markdown document. "
-        "Keep all important facts, preferences, goals, and personal details. "
-        "Use clear headings and bullet points. Remove redundancy and merge similar items. "
-        "Preserve timestamps: keep at least the date (YYYY-MM-DD) for when things were noted. "
-        "You may combine multiple items from the same day under one date; do not strip dates entirely.\n"
-        "Output only the summarized markdown, no preamble.\n\n"
-        f"Memory to summarize:\n{existing_memory}"
+        "You are the structured memory writer for a long-term Telegram gym coach.\n"
+        "Decide what (if anything) is worth saving from one user/assistant exchange.\n"
+        "Return JSON ONLY in the form {\"ops\": [...]}; no prose, no fences.\n\n"
+        f"Current timestamp (Moscow): {timestamp_iso}\n\n"
+        f"{schema_block}\n"
+        f"{required_fields}\n\n"
+        f"{rules}\n\n"
+        "Existing memory excerpts (treat as authoritative; avoid duplicating):\n"
+        "=== Current Snapshot ===\n"
+        f"{current_snapshot.strip() or '(empty)'}\n"
+        "=== Active Issues ===\n"
+        f"{active_issues.strip() or '(empty)'}\n"
+        "=== Active Plans ===\n"
+        f"{active_plans.strip() or '(empty)'}\n"
+        "=== Non-expired Recent Notes ===\n"
+        f"{recent_memory_visible.strip() or '(empty)'}\n\n"
+        "USER MESSAGE:\n"
+        f"{user_message}\n\n"
+        "ASSISTANT REPLY:\n"
+        f"{assistant_response}\n"
     )
-    result = await chat(
+
+    chosen_model = model or config.MEMORY_WRITER_MODEL
+    return await chat(
         messages=[{"role": "user", "content": prompt}],
-        model=config.SUMMARIZATION_MODEL,
+        model=chosen_model,
         allow_fallback=False,
+        # Gemini Pro with medium reasoning can take 60-180s on the
+        # occasional turn; give it real headroom for the writer path.
+        timeout_seconds=300.0,
     )
-    return result.strip()
