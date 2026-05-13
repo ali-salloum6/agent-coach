@@ -2,7 +2,7 @@
 
 A Telegram bot that acts as a long-term AI assistant with persistent memory. First agent: **gym coach** (injuries, diet, exercises, programming). Built to be generic so you can add more specialist bots later.
 
-- **Memory**: Remembers (almost) everything you tell it. Stored in `data/<agent>.md`, loaded into the system prompt on each new conversation. Timestamps in memory are **Moscow time** (Europe/Moscow).
+- **Memory**: Two-tier and auto-pruning. Curated long-term memory lives in `data/<agent>.md` and short-lived recent notes in `data/<agent>.recent.md`. After every reply, a **structured memory writer** asks Gemini for strict JSON operations (`add_measurement`, `add_current_fact`, `add_plan`, `add_recent_note`, `supersede`, …) and only writes ops that pass deterministic validation (evidence quote must be an exact substring of the claimed source, categories must be in the allowed set, max 5 ops per exchange). Recent notes auto-expire (default 2–7 days). Timestamps in memory are **Moscow time** (Europe/Moscow). An audit log of every accepted/rejected op is appended to `data/<agent>.memory_ops.jsonl`.
 - **OpenRouter**: Model shortcuts: `mid` = gemini-3-flash, `cheap` = gemini-3.1-flash-lite, `max` = default (pro). Or use a full slug (e.g. `/new google/gemini-3.1-flash-lite`). Default: `google/gemini-3.1-pro-preview`.
 - **Web search**: Toggle per conversation with `/search on|off` (uses OpenRouter’s web plugin).
 
@@ -47,31 +47,56 @@ A Telegram bot that acts as a long-term AI assistant with persistent memory. Fir
 | `/search on\|off` | Turn web search on or off for this conversation |
 | `/remember <text>` | Manually add a note to memory |
 | `/memory` | Show what the bot remembers |
-| `/forget` | Wipe memory (creates a timestamped backup first) |
-| `/summarize` | Condense memory (backs up first; uses gemini-3.1-pro-preview; no fallback) |
+| `/forget` | Wipe memory (creates a timestamped backup for both canonical and recent files first) |
 | `/model <slug>` | Switch model: `mid` / `cheap` / `max`, or a full OpenRouter model slug |
 | `/cheap` | Shortcut to switch to the cheap model (gemini-3.1-flash-lite) |
 | `/openrouter_balance` | Check usage and remaining limit for the current `OPENROUTER_API_KEY` |
 
 ## How memory works
 
-- **Auto**: After each exchange, the extraction model (gemini-3.1-flash-preview; falls back to z-ai/glm-5 on 429) extracts new facts and appends them to `data/<agent>.md` with timestamps in **Moscow time**.
-- **Manual**: `/remember <text>` appends a timestamped line to the same file (also Moscow time).
-- On `/new`, the full memory file is injected into the **system prompt** under “What you remember about the user”, so the coach has full context every new chat.
+- **Auto (structured writer)**: After every reply, `memory_writer.propose_and_apply()` calls Gemini for JSON memory operations, validates each one (op type, source, retention, evidence quote, category, atomicity, plan-transience), and routes accepted operations to:
+  - `## Time Series > <category>` in `data/<agent>.md` for measurements,
+  - `## Current Snapshot`, `## Active Issues`, `## Plans, Advice, And Rationale`, `## Timeline` for durable items,
+  - `data/<agent>.recent.md` for short-lived `add_recent_note` entries with a TTL of 2/7/14/30 days (default 2 for one-off details, 7 for short-term context). Same-day assistant plans referencing "today", "tonight", "this evening", "right now" are automatically downgraded from `long_term` to `recent` retention.
+- **Auto-expiration**: Expired recent notes are pruned **automatically** — on bot startup, on every `/new`, and whenever memory is loaded for the prompt. There is no manual review.
+- **Manual**: `/remember <text>` appends a timestamped note under `## Manual Notes`.
+- On `/new`, canonical memory plus non-expired recent notes are injected into the **system prompt** under "What you remember about the user".
+- **Audit**: Every accepted/rejected operation is recorded in `data/<agent>.memory_ops.jsonl` for debugging.
+- **Rollback**: Set `MEMORY_WRITER_MODE=legacy` to fall back to the old free-form extractor temporarily.
+
+### Seeding from a Telegram export
+
+If you already have an MTProto export at `exports/telegram_chat/messages.jsonl` (produced by `scripts/export_telegram_chat.py`), convert it to a readable Markdown seed without re-exporting:
+
+```bash
+python scripts/telegram_jsonl_to_md.py
+# writes exports/telegram_chat_md/gym_coach_seed.md and an index
+```
+
+This seed becomes the starting point for `data/<agent>.md` after the architecture update — there is no need to keep raw history inside the bot; the export is the authoritative raw source of truth.
 
 ## Project layout
 
 ```
 agent-coach/
-  bot.py              # Telegram entry point + command handlers
-  config.py            # Env, defaults, data dir
-  llm.py               # OpenRouter HTTP client (chat + memory extraction)
-  memory.py            # Read/write/extract memory (markdown files)
+  bot.py                # Telegram entry point + command handlers
+  config.py             # Env, defaults, data dir, MEMORY_WRITER_MODE
+  llm.py                # OpenRouter HTTP client + propose_memory_ops
+  memory.py             # Memory facade (load, append, forget, extract_and_save)
+  memory_writer.py      # Structured writer: validate, apply, audit, prune
+  memory_ops.py         # Strict JSON operation schema + validator
+  memory_template.py    # Canonical Markdown layout and recent-entry format
   agents/
-    base.py            # AgentConfig dataclass
-    gym_coach.py       # Gym coach persona + system prompt
-  data/                # Created at runtime (git-ignored)
-    gym_coach.md       # Persistent memory
+    base.py             # AgentConfig dataclass
+    gym_coach.py        # Gym coach persona + system prompt
+  scripts/
+    export_telegram_chat.py     # MTProto JSONL export
+    telegram_jsonl_to_md.py     # JSONL → readable Markdown seed
+    validate_memory_writer_ops.py  # Offline dry-run against sampled exchanges
+  data/                 # Created at runtime (git-ignored)
+    gym_coach.md           # Curated long-term memory
+    gym_coach.recent.md    # Auto-expiring recent notes
+    gym_coach.memory_ops.jsonl  # Accepted/rejected op audit log
 ```
 
 ## Adding another agent / running multiple bots

@@ -21,9 +21,17 @@ OPENROUTER_CREDITS_URL = "https://openrouter.ai/api/v1/credits"
 OPENROUTER_KEY_INFO_URL = "https://openrouter.ai/api/v1/key"
 
 DEFAULT_MODEL = "google/gemini-3.1-pro-preview"
-SUMMARIZATION_MODEL = DEFAULT_MODEL
 EXTRACTION_MODEL = "google/gemini-3.1-flash-lite-preview"
 CHEAP_MODEL = "google/gemini-3.1-flash-lite-preview"
+# Model the structured memory writer uses to propose JSON ops. Falls back
+# to DEFAULT_MODEL when unset. Use a strong model here: extraction quality
+# directly determines what enters long-term memory.
+MEMORY_WRITER_MODEL = os.environ.get("MEMORY_WRITER_MODEL", "").strip() or DEFAULT_MODEL
+# "structured" routes through memory_writer.propose_and_apply (the new path).
+# "legacy" keeps the old free-form extractor for emergency rollback.
+MEMORY_WRITER_MODE = (
+    os.environ.get("MEMORY_WRITER_MODE", "structured").strip().lower() or "structured"
+)
 
 # On 429 rate limit, retry once with this model instead
 RATE_LIMIT_FALLBACK: dict[str, str] = {
