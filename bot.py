@@ -22,7 +22,7 @@ from telegram.ext import (
 )
 from telegram.request import HTTPXRequest
 
-from telegram.error import BadRequest, TelegramError
+from telegram.error import BadRequest, NetworkError, TelegramError, TimedOut
 
 import config
 import llm
@@ -31,6 +31,7 @@ from agents.german_exam import german_exam
 from agents.gym_coach import gym_coach
 
 MAX_TG_LEN = 4096
+TELEGRAM_TRANSIENT_ERRORS = (TimedOut, NetworkError)
 
 
 def _markdown_to_telegram_html(text: str) -> str:
@@ -512,7 +513,7 @@ async def _conversation_reply(
     """Append user turn, call the model, send reply, schedule memory extraction."""
     session["history"].append({"role": "user", "content": user_content})
 
-    await update.message.chat.send_action("typing")
+    await _safe_send_action(update)
 
     reply_parts: list[str] = []
     chat_id = update.effective_chat.id if update.effective_chat else None
@@ -907,6 +908,68 @@ async def handle_media(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     await _enqueue_album_item(key, item, update, ctx)
 
 
+async def _telegram_reply(
+    message,
+    text: str,
+    *,
+    parse_mode: str | None = None,
+) -> None:
+    """Send a Telegram message with one retry on transient network errors."""
+    for attempt in range(2):
+        try:
+            if parse_mode:
+                await message.reply_text(text, parse_mode=parse_mode)
+            else:
+                await message.reply_text(text)
+            return
+        except BadRequest:
+            if parse_mode:
+                await message.reply_text(text)
+                return
+            raise
+        except TELEGRAM_TRANSIENT_ERRORS:
+            if attempt == 0:
+                log.warning("Telegram reply timed out; retrying once")
+                await asyncio.sleep(1.0)
+                continue
+            raise
+
+
+async def _safe_send_action(update: Update) -> None:
+    try:
+        await update.message.chat.send_action("typing")
+    except TELEGRAM_TRANSIENT_ERRORS:
+        log.warning("send_chat_action timed out; continuing without typing indicator")
+    except TelegramError:
+        log.exception("send_chat_action failed; continuing without typing indicator")
+
+
+async def _handle_app_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    log.error("Unhandled bot error", exc_info=context.error)
+
+    if session["history"] and session["history"][-1].get("role") == "user":
+        session["history"].pop()
+
+    if not isinstance(update, Update):
+        return
+    message = update.effective_message
+    if message is None:
+        return
+
+    err = context.error
+    if isinstance(err, TELEGRAM_TRANSIENT_ERRORS):
+        user_msg = "Telegram connection timed out. Please send your message again."
+    elif isinstance(err, TelegramError):
+        user_msg = "Something went wrong talking to Telegram. Please try again."
+    else:
+        user_msg = "Something went wrong. Please try again."
+
+    try:
+        await _telegram_reply(message, user_msg)
+    except Exception:
+        log.exception("Could not send error reply to user")
+
+
 async def _send_draft(
     ctx: ContextTypes.DEFAULT_TYPE,
     chat_id: int,
@@ -937,10 +1000,7 @@ async def _send_reply(update: Update, text: str) -> None:
     chunks = [text[i : i + MAX_TG_LEN] for i in range(0, len(text), MAX_TG_LEN)]
     for chunk in chunks:
         chunk_html = _markdown_to_telegram_html(chunk)
-        try:
-            await update.message.reply_text(chunk_html, parse_mode="HTML")
-        except BadRequest:
-            await update.message.reply_text(chunk)
+        await _telegram_reply(update.message, chunk_html, parse_mode="HTML")
 
 
 async def _background_extract(user_text: str, assistant_reply: str) -> None:
@@ -1011,6 +1071,8 @@ def main() -> None:
         )
     )
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+    app.add_error_handler(_handle_app_error)
 
     app.post_init = _set_commands
 
