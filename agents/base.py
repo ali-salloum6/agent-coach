@@ -13,6 +13,7 @@ class AgentConfig:
     system_prompt_template: str
     default_model: str = config.DEFAULT_MODEL
     extraction_model: str = config.EXTRACTION_MODEL
+    memory_writer_context: str = "a long-term Telegram coach"
 
     def build_system_prompt(self, memory: str) -> str:
         memory_section = memory.strip() if memory.strip() else "(nothing yet)"

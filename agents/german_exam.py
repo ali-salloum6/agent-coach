@@ -55,5 +55,9 @@ german_exam = AgentConfig(
     name="German Tutor / Exam Coach",
     slug="german_exam",
     system_prompt_template=SYSTEM_PROMPT,
+    memory_writer_context=(
+        "a long-term Telegram German tutor and exam coach focused on language "
+        "level, vocabulary, grammar, exam dates, and weak points"
+    ),
 )
 

@@ -30,6 +30,7 @@ import config
 import llm
 import memory_ops
 import memory_template
+from agents.registry import get_agent
 
 log = logging.getLogger(__name__)
 
@@ -160,6 +161,7 @@ async def propose_and_apply(
             recent_memory_visible=recent_visible,
             timestamp_iso=now_dt.isoformat(),
             model=writer_model,
+            writer_context=get_agent(agent_slug).memory_writer_context,
         )
     except Exception as e:  # noqa: BLE001 - never let extraction crash the bot.
         log.exception("memory_writer: model call failed")

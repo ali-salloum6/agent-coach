@@ -66,4 +66,8 @@ gym_coach = AgentConfig(
     name="Gym Coach",
     slug="gym_coach",
     system_prompt_template=SYSTEM_PROMPT,
+    memory_writer_context=(
+        "a long-term Telegram gym coach focused on fitness, training, nutrition, "
+        "injuries, recovery, and body metrics"
+    ),
 )
