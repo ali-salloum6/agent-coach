@@ -27,8 +27,7 @@ from telegram.error import BadRequest, NetworkError, TelegramError, TimedOut
 import config
 import llm
 import memory
-from agents.german_exam import german_exam
-from agents.gym_coach import gym_coach
+from agents.registry import get_agent
 
 MAX_TG_LEN = 4096
 TELEGRAM_TRANSIENT_ERRORS = (TimedOut, NetworkError)
@@ -185,12 +184,7 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-AGENT_REGISTRY = {
-    gym_coach.slug: gym_coach,
-    german_exam.slug: german_exam,
-}
-
-AGENT = AGENT_REGISTRY.get(config.ACTIVE_AGENT, gym_coach)
+AGENT = get_agent(config.ACTIVE_AGENT)
 
 session: dict = {
     "model": AGENT.default_model,

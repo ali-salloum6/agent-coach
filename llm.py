@@ -373,6 +373,7 @@ async def propose_memory_ops(
     recent_memory_visible: str,
     timestamp_iso: str,
     model: str | None = None,
+    writer_context: str = "a long-term Telegram coach",
 ) -> str:
     """Ask the writer model to propose strict JSON memory operations.
 
@@ -435,7 +436,7 @@ async def propose_memory_ops(
     )
 
     prompt = (
-        "You are the structured memory writer for a long-term Telegram gym coach.\n"
+        f"You are the structured memory writer for {writer_context}.\n"
         "Decide what (if anything) is worth saving from one user/assistant exchange.\n"
         "Return JSON ONLY in the form {\"ops\": [...]}; no prose, no fences.\n\n"
         f"Current timestamp (Moscow): {timestamp_iso}\n\n"
