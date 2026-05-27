@@ -1,0 +1,18 @@
+[Unit]
+Description=Telegram AI Coach (gym coach for supernova)
+After=network-online.target
+After=wg-quick@wg0.service
+Wants=wg-quick@wg0.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/repo/agent-coach
+EnvironmentFile=/root/repo/agent-coach/.env.supernova
+ExecStart=/root/repo/agent-coach/.venv/bin/python3 bot.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
