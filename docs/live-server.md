@@ -24,4 +24,4 @@ journalctl -u agent-supernova.service -f
 
 List related units: `systemctl list-units 'agent-*'`.
 
-Telegram traffic may use a **WireGuard + tinyproxy** path to Finland; see [outbound-proxy.md](outbound-proxy.md).
+Telegram traffic uses a **WireGuard + tinyproxy** path via **Stockholm** (`ssh stockholm`; legacy **Finland** `fin` kept as standby). See [outbound-proxy.md](outbound-proxy.md).
