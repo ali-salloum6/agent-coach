@@ -24,4 +24,4 @@ journalctl -u agent-supernova.service -f
 
 List related units: `systemctl list-units 'agent-*'`.
 
-Telegram traffic may use a **WireGuard + tinyproxy** path to a proxy host; see [outbound-proxy.md](outbound-proxy.md).
+Telegram traffic uses a **WireGuard + tinyproxy** path via the **proxy host** (`ssh YOUR_PROXY_HOST`; legacy `YOUR_OLD_PROXY_HOST` kept as standby). See [outbound-proxy.md](outbound-proxy.md).

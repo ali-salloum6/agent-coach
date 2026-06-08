@@ -19,15 +19,31 @@ The bot uses `telegram.request.HTTPXRequest` with relaxed timeouts (`read` 60s, 
 ## Reference layout (this deployment)
 
 
-| Role           | SSH alias | Notes                                                                                          |
-| -------------- | --------- | ---------------------------------------------------------------------------------------------- |
-| Bot host       | `YOUR_OLD_SERVER`     | Runs `agent-coach.service`, WireGuard **client** `wg0` → `10.8.0.2/24`                         |
-| Egress / proxy | `YOUR_OLD_PROXY_HOST`     | Proxy VPS, WireGuard **server** `10.8.0.1/24`, UDP `51820`, **tinyproxy** on `10.8.0.1:8888` |
+| Role           | SSH alias   | Notes                                                                                            |
+| -------------- | ----------- | ------------------------------------------------------------------------------------------------ |
+| Bot host       | `YOUR_OLD_SERVER`       | Runs `agent-coach.service`, WireGuard **client** `wg0` → `10.8.0.2/24`                           |
+| Egress / proxy | `YOUR_PROXY_HOST` | **Active** proxy VPS, WireGuard **server** `10.8.0.1/24`, UDP `51820`, **tinyproxy** `:8888` |
+| Egress / proxy | `YOUR_OLD_PROXY_HOST`       | **Legacy / standby** proxy VPS (same layout; not used unless switched back)                      |
 
 
 WireGuard subnet: `10.8.0.0/24` (server `.1`, client `.2`). Only the bot’s WG address is allowed to use tinyproxy.
 
-### Old proxy host (`YOUR_OLD_PROXY_HOST`) — installed packages
+### Proxy host (`YOUR_PROXY_HOST`) — active egress (2026-06)
+
+- **SSH**: `YOUR_PROXY_IP`, alias `YOUR_PROXY_HOST` in `~/.ssh/config` (key-only; password disabled)
+- **WireGuard**: server `10.8.0.1/24`, UDP `51820`, peer = bot (`YOUR_OLD_SERVER`) public key, `AllowedIPs = 10.8.0.2/32`
+- **tinyproxy**: `10.8.0.1:8888`, `Allow 10.8.0.2`
+- **UFW**: OpenSSH, `51820/udp`, `8888/tcp` on `wg0`
+- **Telegram DNS**: `/etc/hosts` pins `TELEGRAM_DC_IP api.telegram.org`
+- `YOUR_OLD_SERVER` peer endpoint: `YOUR_PROXY_IP:51820`
+
+Quick check after deploy:
+
+```bash
+ssh YOUR_OLD_SERVER 'wg show; curl -sS -o /dev/null -w "%{http_code}\n" -x http://10.8.0.1:8888 https://api.telegram.org/'
+```
+
+### Old proxy host (`YOUR_OLD_PROXY_HOST`) — legacy / standby
 
 - `wireguard`, `tinyproxy`
 - `/etc/wireguard/wg0.conf` — server key, `ListenPort 51820`, peer = bot’s public key, `AllowedIPs` for the client
@@ -36,12 +52,12 @@ WireGuard subnet: `10.8.0.0/24` (server `.1`, client `.2`). Only the bot’s WG 
 
 **tinyproxy systemd drop-in** (`/etc/systemd/system/tinyproxy.service.d/wg-order-restart.conf`): `After=` and `Requires=` `wg-quick@wg0.service` so tinyproxy starts only after `10.8.0.1` exists; `Restart=on-failure`, `RestartSec=10`, and start limits to reduce crash loops. Recreate this file if you reinstall the `tinyproxy` package and lose the drop-in.
 
-Public endpoint for the tunnel: **UDP `YOUR_OLD_PROXY_IP:51820`** (replace if the host changes).
+Public endpoint for the tunnel: **UDP `YOUR_PROXY_IP:51820`** (active). Legacy proxy: `YOUR_OLD_PROXY_IP:51820`.
 
 ### Bot host (`YOUR_OLD_SERVER`) — installed packages
 
 - `wireguard-tools`
-- `/etc/wireguard/wg0.conf` — client key, `Address 10.8.0.2/24`, peer = server public key, `Endpoint = YOUR_OLD_PROXY_IP:51820`, `AllowedIPs = 10.8.0.1/32`, `PersistentKeepalive = 25`
+- `/etc/wireguard/wg0.conf` — client key, `Address 10.8.0.2/24`, peer = server public key, `Endpoint = YOUR_PROXY_IP:51820` (active proxy; was `YOUR_OLD_PROXY_IP` for the old proxy), `AllowedIPs = 10.8.0.1/32`, `PersistentKeepalive = 25`
 - `systemctl enable --now wg-quick@wg0`
 
 Quick check from the bot host:
@@ -74,8 +90,15 @@ The German bot uses `EnvironmentFile=/root/repo/agent-coach/.env.german` with th
 
 ## Operations
 
-- **Restart tunnel after proxy host reboot:** `wg-quick@wg0` and `tinyproxy` are enabled; confirm `wg show` on both sides if the bot loses Telegram connectivity.
-- **Firewall:** The proxy host must allow **UDP 51820** from the bot host’s public IP (or from anywhere during testing; tighten for production).
+- **Restart tunnel after egress host reboot:** `wg-quick@wg0` and `tinyproxy` are enabled on `YOUR_PROXY_HOST`; confirm `wg show` on both sides if the bot loses Telegram connectivity.
+- **Telegram DNS on egress host:** Some `api.telegram.org` A records are unreachable from the egress VPS (CONNECT hangs; tinyproxy logs `Could not establish a connection to api.telegram.org`). Pin a working DC in `/etc/hosts` on `YOUR_PROXY_HOST` (or `YOUR_OLD_PROXY_HOST` if using legacy):
+  ```bash
+  # On YOUR_OLD_PROXY_HOST — pick an IP that answers: curl --resolve api.telegram.org:443:<IP> https://api.telegram.org/
+  echo 'TELEGRAM_DC_IP api.telegram.org' >> /etc/hosts
+  systemctl restart tinyproxy
+  ```
+  Re-test from `YOUR_OLD_SERVER`: `curl -x http://10.8.0.1:8888 -o /dev/null -w '%{http_code}\n' https://api.telegram.org/` (expect `302` quickly).
+- **Firewall:** Egress host must allow **UDP 51820** and **TCP 8888 on `wg0`** (e.g. `ufw allow in on wg0 to any port 8888`).
 - **Secrets:** WireGuard private keys live only under `/etc/wireguard/` on each host; do not commit them.
 
 See also [live-server.md](live-server.md) for SSH paths and unit names.
