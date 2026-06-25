@@ -49,7 +49,7 @@ cd ~/repo/agent-coach
 ```
 
 Snapshot what's running today (the 180k-token file plus any backups
-`forget`/`summarize` have created):
+manual snapshots or older backups have created):
 
 ```bash
 ts=$(date -u +%Y%m%d_%H%M%S)
