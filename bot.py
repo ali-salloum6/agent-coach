@@ -191,6 +191,7 @@ session: dict = {
     "model": AGENT.default_model,
     "history": [],
     "web_search": False,
+    "tts": config.TTS_AUTO_READ,
 }
 
 STREAM_FLUSH_INTERVAL_SECONDS = 0.25
@@ -230,6 +231,7 @@ def _reset_session(model: str | None = None) -> None:
     session["model"] = model or AGENT.default_model
     session["history"] = [{"role": "system", "content": system_prompt}]
     session["web_search"] = False
+    session["tts"] = config.TTS_AUTO_READ
 
 
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -248,7 +250,7 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         "/model &lt;slug&gt; — switch LLM model\n"
         "/cheap — use 3.1 flash lite (cheaper)\n"
         "/openrouter_balance — check OpenRouter remaining credits\n"
-        "/read — read the last reply aloud (text-to-speech)\n\n"
+        "/read on|off — auto-read replies aloud (on by default)\n\n"
         "Send <b>photos</b> or image files with optional captions; photo albums are "
         "grouped into one message for the model.\n\n"
         f"Current model: <code>{model}</code>",
@@ -377,6 +379,95 @@ def _last_assistant_reply() -> str | None:
     return None
 
 
+async def _upload_tts_audio(message, wav_bytes: bytes) -> None:
+    audio_file = InputFile(BytesIO(wav_bytes), filename="reply.wav")
+    try:
+        await message.reply_audio(audio_file, title="Reply")
+    except TELEGRAM_TRANSIENT_ERRORS:
+        log.warning("Telegram audio upload timed out; retrying once")
+        await asyncio.sleep(1.0)
+        audio_file = InputFile(BytesIO(wav_bytes), filename="reply.wav")
+        await message.reply_audio(audio_file, title="Reply")
+
+
+async def _send_tts_audio(
+    message,
+    text: str,
+    *,
+    status_message: bool = False,
+) -> None:
+    """Synthesize *text* and send WAV audio to the chat."""
+    if not config.TTS_ENABLED:
+        if status_message:
+            await message.reply_text("Text-to-speech is disabled.")
+        return
+
+    if not tts.is_speakable(text):
+        if status_message:
+            await message.reply_text("Nothing speakable in the last reply.")
+        return
+
+    clean_len = len(tts.reply_to_speech_text(text))
+    if clean_len > tts.MAX_TTS_CHARS:
+        msg = (
+            f"Last reply is too long to read aloud ({clean_len:,} chars; "
+            f"max {tts.MAX_TTS_CHARS:,}). Ask for a shorter summary first."
+        )
+        if status_message:
+            await message.reply_text(msg)
+        else:
+            log.warning("Auto-read skipped: %s", msg)
+        return
+
+    if _tts_lock.locked():
+        if status_message:
+            await message.reply_text("Already generating audio — please wait.")
+        else:
+            log.info("Auto-read skipped: TTS already in progress")
+        return
+
+    if status_message:
+        await message.reply_text("Generating audio…")
+    try:
+        await message.chat.send_action("record_voice")
+    except TelegramError:
+        log.warning("send_chat_action record_voice failed; continuing")
+
+    async with _tts_lock:
+        try:
+            wav_bytes = await asyncio.to_thread(tts.synthesize_to_wav_bytes, text)
+        except ValueError as e:
+            if status_message:
+                await message.reply_text(str(e))
+            else:
+                log.warning("Auto-read synthesis skipped: %s", e)
+            return
+        except Exception:
+            log.exception("TTS synthesis failed")
+            if status_message:
+                await message.reply_text("Could not generate audio. Try again later.")
+            return
+
+    try:
+        await _upload_tts_audio(message, wav_bytes)
+    except Exception:
+        log.exception("Failed to send TTS audio")
+        if status_message:
+            await message.reply_text(
+                "Audio was generated but failed to upload. Try again."
+            )
+
+
+async def _background_tts(update: Update, reply: str) -> None:
+    message = update.effective_message
+    if message is None:
+        return
+    try:
+        await _send_tts_audio(message, reply, status_message=False)
+    except Exception:
+        log.exception("Background TTS failed (non-fatal)")
+
+
 async def cmd_read(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_allowed_user(update):
         return
@@ -384,63 +475,34 @@ async def cmd_read(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("Text-to-speech is disabled.")
         return
 
+    if not ctx.args:
+        status = "on" if session["tts"] else "off"
+        await update.message.reply_text(
+            f"Auto-read is <b>{status}</b>. Each reply includes audio when on.\n"
+            "/read on|off — toggle · /read last — replay last reply",
+            parse_mode="HTML",
+        )
+        return
+
+    flag = ctx.args[0].lower()
+    if flag == "on":
+        session["tts"] = True
+        await update.message.reply_text("Auto-read <b>enabled</b>.", parse_mode="HTML")
+        return
+    if flag == "off":
+        session["tts"] = False
+        await update.message.reply_text("Auto-read <b>disabled</b>.", parse_mode="HTML")
+        return
+    if flag != "last":
+        await update.message.reply_text("Usage: /read on|off · /read last")
+        return
+
     reply = _last_assistant_reply()
     if not reply:
         await update.message.reply_text("Nothing to read yet — send a message first.")
         return
 
-    if not tts.is_speakable(reply):
-        await update.message.reply_text("Nothing speakable in the last reply.")
-        return
-
-    clean_len = len(tts.reply_to_speech_text(reply))
-    if clean_len > tts.MAX_TTS_CHARS:
-        await update.message.reply_text(
-            f"Last reply is too long to read aloud ({clean_len:,} chars; "
-            f"max {tts.MAX_TTS_CHARS:,}). Ask for a shorter summary first."
-        )
-        return
-
-    if _tts_lock.locked():
-        await update.message.reply_text("Already generating audio — please wait.")
-        return
-
-    await update.message.reply_text("Generating audio…")
-    try:
-        await update.message.chat.send_action("record_voice")
-    except TelegramError:
-        log.warning("send_chat_action record_voice failed; continuing")
-
-    async with _tts_lock:
-        try:
-            wav_bytes = await asyncio.to_thread(tts.synthesize_to_wav_bytes, reply)
-        except ValueError as e:
-            await update.message.reply_text(str(e))
-            return
-        except Exception:
-            log.exception("TTS synthesis failed")
-            await update.message.reply_text("Could not generate audio. Try again later.")
-            return
-
-    try:
-        audio_file = InputFile(BytesIO(wav_bytes), filename="reply.wav")
-        await update.message.reply_audio(audio_file, title="Last reply")
-    except TELEGRAM_TRANSIENT_ERRORS:
-        log.warning("Telegram audio upload timed out; retrying once")
-        await asyncio.sleep(1.0)
-        try:
-            audio_file = InputFile(BytesIO(wav_bytes), filename="reply.wav")
-            await update.message.reply_audio(audio_file, title="Last reply")
-        except Exception:
-            log.exception("Failed to send TTS audio after retry")
-            await update.message.reply_text(
-                "Audio was generated but failed to upload. Try again."
-            )
-    except TelegramError:
-        log.exception("Failed to send TTS audio")
-        await update.message.reply_text(
-            "Audio was generated but failed to upload. Try again."
-        )
+    await _send_tts_audio(update.message, reply, status_message=True)
 
 
 async def cmd_openrouter_balance(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -786,6 +848,9 @@ async def _conversation_reply(
 
     asyncio.create_task(_background_extract(memory_user_text, reply))
 
+    if config.TTS_ENABLED and session["tts"]:
+        asyncio.create_task(_background_tts(update, reply))
+
 
 async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_allowed_user(update):
@@ -1080,7 +1145,7 @@ BOT_COMMANDS = [
     BotCommand("memory", "Show what I remember"),
     BotCommand("model", "Switch LLM model"),
     BotCommand("cheap", "Use 3.1 flash lite (cheaper)"),
-    BotCommand("read", "Read last reply aloud"),
+    BotCommand("read", "Auto-read replies aloud (on|off)"),
     BotCommand("openrouter_balance", "Check OpenRouter remaining credits"),
 ]
 

@@ -41,7 +41,8 @@ A Telegram bot that acts as a long-term AI assistant with persistent memory. Fir
    - `TELEGRAM_BOT_TOKEN` — from [@BotFather](https://t.me/BotFather)
    - `OPENROUTER_API_KEY` — from [OpenRouter](https://openrouter.ai/)
    - `TTS_VOICE` — optional; Kokoro voice for `/read` (default `bm_george`; American: `am_michael`, `am_fenrir`, …)
-   - `TTS_ENABLED` — optional; set to `false` to disable `/read` (default `true`)
+   - `TTS_ENABLED` — optional; set to `false` to disable TTS (default `true`)
+   - `TTS_AUTO_READ` — optional; attach audio after each reply when `true` (default `true`)
 
 4. **Run the bot**:
 
@@ -60,7 +61,7 @@ A Telegram bot that acts as a long-term AI assistant with persistent memory. Fir
 | `/memory` | Show what the bot remembers |
 | `/model <slug>` | Switch model: `mid` / `cheap` / `max`, or a full OpenRouter model slug |
 | `/cheap` | Shortcut to switch to the cheap model (gemini-3.1-flash-lite) |
-| `/read` | Text-to-speech: read the bot’s last reply aloud (Kokoro-82M) |
+| `/read on\|off` | Auto-read each reply aloud (on by default); `/read last` replays the last reply |
 | `/openrouter_balance` | Check usage and remaining limit for the current `OPENROUTER_API_KEY` |
 
 ## How memory works
