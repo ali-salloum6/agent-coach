@@ -107,8 +107,10 @@ class RecentEntryTests(unittest.TestCase):
             + "\n"
             + recent_fresh.render()
         )
-        pruned, count = mt.prune_expired(content, now=NOW)
+        pruned, count, archived = mt.prune_expired(content, now=NOW)
         self.assertEqual(count, 1)
+        self.assertEqual(len(archived), 1)
+        self.assertIn("Old note from days ago.", archived[0]["bullet"])
         self.assertNotIn("Old note from days ago.", pruned)
         self.assertIn("Fresh note.", pruned)
 
@@ -117,9 +119,59 @@ class RecentEntryTests(unittest.TestCase):
             mt.recent_template("gym_coach")
             + "\n- This bullet has no machine metadata; keep it.\n"
         )
-        pruned, count = mt.prune_expired(content, now=NOW)
+        pruned, count, archived = mt.prune_expired(content, now=NOW)
         self.assertEqual(count, 0)
+        self.assertEqual(archived, [])
         self.assertIn("This bullet has no machine metadata", pruned)
+
+    def test_prune_keeps_missing_or_invalid_expires(self) -> None:
+        content = (
+            mt.recent_template("gym_coach")
+            + "\n<!-- recent: created=2026-05-01T10:00:00+03:00 category=workout source=user -->\n"
+            + "- [2026-05-01 10:00 Moscow | workout · user] No expires field.\n"
+            + "\n<!-- recent: created=2026-05-01T11:00:00+03:00 expires=not-a-date ttl_days=7 category=workout source=user -->\n"
+            + "- [2026-05-01 11:00 Moscow | workout · user] Bad expires.\n"
+        )
+        pruned, count, archived = mt.prune_expired(content, now=NOW)
+        self.assertEqual(count, 0)
+        self.assertIn("No expires field.", pruned)
+        self.assertIn("Bad expires.", pruned)
+
+    def test_prune_skips_blank_lines_before_bullet(self) -> None:
+        recent_old = mt.build_recent_entry(
+            summary="Expired with gap.",
+            category="logistics",
+            source="user",
+            ttl_days=1,
+            now=NOW - timedelta(days=4),
+        )
+        content = mt.recent_template("gym_coach") + "\n" + recent_old.render().replace(
+            "\n-", "\n\n\n-"
+        )
+        pruned, count, archived = mt.prune_expired(content, now=NOW)
+        self.assertEqual(count, 1)
+        self.assertNotIn("Expired with gap.", pruned)
+        self.assertIn("Expired with gap.", archived[0]["bullet"])
+
+    def test_prune_recent_file_archives_removed_entries(self) -> None:
+        import tempfile
+
+        recent_old = mt.build_recent_entry(
+            summary="Archive me.",
+            category="nutrition",
+            source="assistant",
+            ttl_days=1,
+            now=NOW - timedelta(days=3),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "gym_coach.recent.md"
+            path.write_text(mt.recent_template("gym_coach") + "\n" + recent_old.render())
+            count = mt.prune_recent_file(path, now=NOW)
+            archive = path.with_name("gym_coach.recent.pruned.jsonl")
+            self.assertEqual(count, 1)
+            self.assertTrue(archive.exists())
+            self.assertIn("Archive me.", archive.read_text(encoding="utf-8"))
+            self.assertNotIn("Archive me.", path.read_text(encoding="utf-8"))
 
     def test_visible_recent_strips_machine_comments(self) -> None:
         entry = mt.build_recent_entry(

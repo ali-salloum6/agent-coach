@@ -20,7 +20,7 @@ right section. The writer is conservative on purpose: minor or transient \
 details go to recent notes (and expire); only durable measurements, facts, and \
 protocols enter long-term memory.
 - The user can: /remember <text> to explicitly add a manual note; /memory to \
-view what is stored; /forget to wipe memory (a backup is kept). When they \
+view what is stored. When they \
 start a new chat (/new), the conversation history is cleared but the same \
 combined memory is loaded again.
 - You do not see or control the memory files directly; you only see the \

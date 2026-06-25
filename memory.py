@@ -10,7 +10,6 @@ with non-expired recent notes and prunes the recent file automatically.
 from __future__ import annotations
 
 import logging
-import shutil
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -64,21 +63,6 @@ def append(agent_slug: str, text: str) -> None:
         body=body,
     )
     canonical_path.write_text(new_md, encoding="utf-8")
-
-
-def forget(agent_slug: str) -> str | None:
-    """Backup both canonical and recent files, then remove them."""
-    backed_up: list[str] = []
-    timestamp = _now_moscow().strftime("%Y%m%d_%H%M%S")
-    for path in (_canonical_path(agent_slug), _recent_path(agent_slug)):
-        if not path.exists():
-            continue
-        backup = path.with_suffix(f".backup_{timestamp}.md")
-        shutil.move(path, backup)
-        backed_up.append(str(backup))
-    if not backed_up:
-        return None
-    return "; ".join(backed_up)
 
 
 async def extract_and_save(

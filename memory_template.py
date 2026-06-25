@@ -16,6 +16,7 @@ The model never writes Markdown directly. All shape lives here.
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -317,16 +318,47 @@ def _parse_iso_aware(value: str) -> datetime | None:
     return dt
 
 
-def prune_expired(content: str, *, now: datetime | None = None) -> tuple[str, int]:
+def _bullet_index_after_meta(lines: list[str], meta_idx: int) -> int | None:
+    """Return the index of the bullet line paired with a recent meta comment."""
+    j = meta_idx + 1
+    while j < len(lines) and not lines[j].strip():
+        j += 1
+    if j < len(lines) and lines[j].lstrip().startswith("- "):
+        return j
+    return None
+
+
+def _archive_pruned_entries(
+    path: Path,
+    archived: list[dict[str, str]],
+    *,
+    now: datetime | None = None,
+) -> None:
+    if not archived:
+        return
+    archive_path = path.with_name(f"{path.stem}.pruned.jsonl")
+    pruned_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat()
+    with archive_path.open("a", encoding="utf-8") as f:
+        for entry in archived:
+            f.write(json.dumps({"pruned_at": pruned_at, **entry}, ensure_ascii=False) + "\n")
+
+
+def prune_expired(
+    content: str,
+    *,
+    now: datetime | None = None,
+) -> tuple[str, int, list[dict[str, str]]]:
     """Drop expired `<!-- recent: ... -->` + bullet entries.
 
-    Returns (new_content, pruned_count). Entries without a `<!-- recent: -->`
-    marker (e.g. manual notes) are preserved.
+    Returns (new_content, pruned_count, archived_entries). Entries without a
+    `<!-- recent: -->` marker (e.g. manual notes) are preserved. Entries with
+    a missing or unparseable `expires` timestamp are also preserved.
     """
     threshold = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     lines = content.splitlines()
     out: list[str] = []
     pruned = 0
+    archived: list[dict[str, str]] = []
     i = 0
     while i < len(lines):
         line = lines[i]
@@ -337,18 +369,23 @@ def prune_expired(content: str, *, now: datetime | None = None) -> tuple[str, in
             continue
         expires_raw = fields.get("expires") or ""
         expires_at = _parse_iso_aware(expires_raw)
-        bullet_idx = i + 1
+        bullet_idx = _bullet_index_after_meta(lines, i)
         if expires_at is not None and expires_at.astimezone(timezone.utc) <= threshold:
-            # Skip the meta line and (if present) the following bullet line.
-            if bullet_idx < len(lines) and lines[bullet_idx].lstrip().startswith("- "):
-                i = bullet_idx + 1
-            else:
-                i += 1
+            archived.append(
+                {
+                    "created": fields.get("created", ""),
+                    "expires": expires_raw,
+                    "ttl_days": fields.get("ttl_days", ""),
+                    "category": fields.get("category", ""),
+                    "source": fields.get("source", ""),
+                    "bullet": lines[bullet_idx] if bullet_idx is not None else "",
+                }
+            )
+            i = (bullet_idx + 1) if bullet_idx is not None else i + 1
             pruned += 1
             continue
-        # Keep the meta line and its bullet (if any).
         out.append(line)
-        if bullet_idx < len(lines) and lines[bullet_idx].lstrip().startswith("- "):
+        if bullet_idx is not None:
             out.append(lines[bullet_idx])
             i = bullet_idx + 1
         else:
@@ -356,15 +393,16 @@ def prune_expired(content: str, *, now: datetime | None = None) -> tuple[str, in
     new_content = "\n".join(out)
     if content.endswith("\n") and not new_content.endswith("\n"):
         new_content += "\n"
-    return new_content, pruned
+    return new_content, pruned, archived
 
 
 def prune_recent_file(path: Path, *, now: datetime | None = None) -> int:
     if not path.exists():
         return 0
     content = path.read_text(encoding="utf-8")
-    new_content, pruned = prune_expired(content, now=now)
+    new_content, pruned, archived = prune_expired(content, now=now)
     if pruned:
+        _archive_pruned_entries(path, archived, now=now)
         path.write_text(new_content, encoding="utf-8")
     return pruned
 
@@ -375,7 +413,7 @@ def visible_recent(content: str, *, now: datetime | None = None) -> str:
     Used for injecting into the prompt: we don't want machine metadata
     visible to the model.
     """
-    new_content, _ = prune_expired(content, now=now)
+    new_content, _, _ = prune_expired(content, now=now)
     lines = new_content.splitlines()
     cleaned = [line for line in lines if not line.lstrip().startswith(_RECENT_META_PREFIX)]
     return "\n".join(cleaned).strip() + ("\n" if cleaned else "")
