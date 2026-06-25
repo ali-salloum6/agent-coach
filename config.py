@@ -50,3 +50,8 @@ MAX_VISION_PAYLOAD_BYTES = int(
     os.environ.get("MAX_VISION_PAYLOAD_BYTES", str(20 * 1024 * 1024))
 )
 MEDIA_GROUP_DEBOUNCE_SEC = float(os.environ.get("MEDIA_GROUP_DEBOUNCE_SEC", "1.2"))
+
+# Text-to-speech (/read) — Kokoro-82M, CPU-only torch on the VPS
+TTS_VOICE = os.environ.get("TTS_VOICE", "bm_george").strip() or "bm_george"
+_tts_enabled = os.environ.get("TTS_ENABLED", "true").strip().lower()
+TTS_ENABLED = _tts_enabled not in ("0", "false", "no", "off")

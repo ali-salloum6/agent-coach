@@ -2,3 +2,9 @@ python-telegram-bot[ext]~=22.6
 httpx~=0.28
 python-dotenv~=1.1
 telethon~=1.42
+kokoro>=0.9.4
+numpy
+soundfile
+# CPU-only torch (install before/after this file on the VPS):
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+#   pip install -r requirements.txt
