@@ -55,3 +55,5 @@ MEDIA_GROUP_DEBOUNCE_SEC = float(os.environ.get("MEDIA_GROUP_DEBOUNCE_SEC", "1.2
 TTS_VOICE = os.environ.get("TTS_VOICE", "bm_george").strip() or "bm_george"
 _tts_enabled = os.environ.get("TTS_ENABLED", "true").strip().lower()
 TTS_ENABLED = _tts_enabled not in ("0", "false", "no", "off")
+_tts_auto = os.environ.get("TTS_AUTO_READ", "true").strip().lower()
+TTS_AUTO_READ = _tts_auto not in ("0", "false", "no", "off")

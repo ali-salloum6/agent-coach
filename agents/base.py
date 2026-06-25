@@ -5,6 +5,13 @@ from datetime import datetime
 
 import config
 
+TTS_PROMPT_GUIDANCE = """\
+**Read-aloud:** Replies are often read aloud via text-to-speech. Write so they \
+sound natural when spoken: spell out units (e.g. "95 kilograms" not "95 kg" or \
+"95g"), say "about" instead of "~", avoid bare abbreviations, and use clear \
+plain sentences.
+"""
+
 
 @dataclass
 class AgentConfig:
@@ -19,8 +26,9 @@ class AgentConfig:
         memory_section = memory.strip() if memory.strip() else "(nothing yet)"
         now = datetime.now()
         current_datetime = now.strftime("%Y-%m-%d, %A, %H:%M")
-        return (
-            self.system_prompt_template.replace("{memory}", memory_section).replace(
-                "{current_datetime}", current_datetime
-            )
+        prompt = self.system_prompt_template.replace("{memory}", memory_section).replace(
+            "{current_datetime}", current_datetime
         )
+        if config.TTS_ENABLED:
+            prompt = prompt.rstrip() + "\n\n" + TTS_PROMPT_GUIDANCE
+        return prompt

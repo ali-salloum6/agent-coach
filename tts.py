@@ -67,6 +67,29 @@ def reply_to_speech_text(text: str) -> str:
     # Collapse whitespace
     t = re.sub(r"\n{3,}", "\n\n", t)
     t = re.sub(r"[ \t]+", " ", t)
+    t = _normalize_units_and_symbols(t.strip())
+    return t
+
+
+def _normalize_units_and_symbols(text: str) -> str:
+    """Expand abbreviations and symbols for natural TTS."""
+    t = text
+    t = re.sub(r"~\s*(\d)", r"about \1", t)
+    t = re.sub(r"~", " about ", t)
+    unit_rules = [
+        (r"\b(\d+(?:\.\d+)?)\s*kg\b", r"\1 kilograms"),
+        (r"\b(\d+(?:\.\d+)?)\s*mg\b", r"\1 milligrams"),
+        (r"\b(\d+(?:\.\d+)?)\s*ml\b", r"\1 milliliters"),
+        (r"\b(\d+(?:\.\d+)?)\s*cm\b", r"\1 centimeters"),
+        (r"\b(\d+(?:\.\d+)?)\s*km\b", r"\1 kilometers"),
+        (r"\b(\d+(?:\.\d+)?)\s*g(?![a-zA-Z])\b", r"\1 grams"),
+        (r"\b(\d+)\s*mins?\b", r"\1 minutes"),
+        (r"\b(\d+)\s*hrs?\b", r"\1 hours"),
+    ]
+    for pattern, repl in unit_rules:
+        t = re.sub(pattern, repl, t, flags=re.IGNORECASE)
+    t = re.sub(r"[\U0001F300-\U0001FAFF\U00002600-\U000027BF]", "", t)
+    t = re.sub(r"[ \t]+", " ", t)
     return t.strip()
 
 

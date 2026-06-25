@@ -53,6 +53,19 @@ class ReplyToSpeechTextTests(unittest.TestCase):
     def test_is_speakable_true_for_plain_text(self) -> None:
         self.assertTrue(tts.is_speakable("Hello world."))
 
+    def test_normalizes_tilde_and_units(self) -> None:
+        out = tts.reply_to_speech_text("Weigh ~95 kg and take 200mg.")
+        self.assertIn("about 95", out)
+        self.assertIn("kilograms", out)
+        self.assertIn("milligrams", out)
+        self.assertNotIn("~", out)
+        self.assertNotIn(" kg", out.lower())
+
+    def test_normalizes_grams_not_inside_words(self) -> None:
+        out = tts.reply_to_speech_text("Eat 30g protein. Good job.")
+        self.assertIn("30 grams", out)
+        self.assertIn("Good job", out)
+
 
 class SynthesizeTests(unittest.TestCase):
     def _fake_soundfile_module(self) -> MagicMock:
