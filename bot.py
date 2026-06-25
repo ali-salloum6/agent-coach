@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import httpx
-from telegram import BotCommand, Update
+from telegram import BotCommand, InputFile, Update
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -27,6 +27,7 @@ from telegram.error import BadRequest, NetworkError, TelegramError, TimedOut
 import config
 import llm
 import memory
+import tts
 from agents.registry import get_agent
 
 MAX_TG_LEN = 4096
@@ -198,6 +199,7 @@ _draft_id_counter = itertools.count(start=int(time.time()))
 
 _album_lock = asyncio.Lock()
 _album_pending: dict[str, dict] = {}
+_tts_lock = asyncio.Lock()
 
 
 def _is_allowed_user(update: Update) -> bool:
@@ -243,10 +245,10 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         "/search on|off — toggle web search\n"
         "/remember &lt;text&gt; — save a note to memory\n"
         "/memory — show what I remember\n"
-        "/forget — wipe memory (backs up first)\n"
         "/model &lt;slug&gt; — switch LLM model\n"
         "/cheap — use 3.1 flash lite (cheaper)\n"
-        "/openrouter_balance — check OpenRouter remaining credits\n\n"
+        "/openrouter_balance — check OpenRouter remaining credits\n"
+        "/read — read the last reply aloud (text-to-speech)\n\n"
         "Send <b>photos</b> or image files with optional captions; photo albums are "
         "grouped into one message for the model.\n\n"
         f"Current model: <code>{model}</code>",
@@ -328,16 +330,6 @@ async def cmd_memory(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(mem)
 
 
-async def cmd_forget(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _is_allowed_user(update):
-        return
-    backup = memory.forget(AGENT.slug)
-    if backup:
-        await update.message.reply_text("Memory wiped. A backup was saved.")
-    else:
-        await update.message.reply_text("Nothing to forget — memory was already empty.")
-
-
 async def cmd_model(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_allowed_user(update):
         return
@@ -373,6 +365,82 @@ async def cmd_cheap(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         f"Switched to cheap model: <code>{model_esc}</code>",
         parse_mode="HTML",
     )
+
+
+def _last_assistant_reply() -> str | None:
+    for msg in reversed(session["history"]):
+        if msg.get("role") != "assistant":
+            continue
+        content = msg.get("content")
+        if isinstance(content, str) and content.strip():
+            return content
+    return None
+
+
+async def cmd_read(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_allowed_user(update):
+        return
+    if not config.TTS_ENABLED:
+        await update.message.reply_text("Text-to-speech is disabled.")
+        return
+
+    reply = _last_assistant_reply()
+    if not reply:
+        await update.message.reply_text("Nothing to read yet — send a message first.")
+        return
+
+    if not tts.is_speakable(reply):
+        await update.message.reply_text("Nothing speakable in the last reply.")
+        return
+
+    clean_len = len(tts.reply_to_speech_text(reply))
+    if clean_len > tts.MAX_TTS_CHARS:
+        await update.message.reply_text(
+            f"Last reply is too long to read aloud ({clean_len:,} chars; "
+            f"max {tts.MAX_TTS_CHARS:,}). Ask for a shorter summary first."
+        )
+        return
+
+    if _tts_lock.locked():
+        await update.message.reply_text("Already generating audio — please wait.")
+        return
+
+    await update.message.reply_text("Generating audio…")
+    try:
+        await update.message.chat.send_action("record_voice")
+    except TelegramError:
+        log.warning("send_chat_action record_voice failed; continuing")
+
+    async with _tts_lock:
+        try:
+            wav_bytes = await asyncio.to_thread(tts.synthesize_to_wav_bytes, reply)
+        except ValueError as e:
+            await update.message.reply_text(str(e))
+            return
+        except Exception:
+            log.exception("TTS synthesis failed")
+            await update.message.reply_text("Could not generate audio. Try again later.")
+            return
+
+    try:
+        audio_file = InputFile(BytesIO(wav_bytes), filename="reply.wav")
+        await update.message.reply_audio(audio_file, title="Last reply")
+    except TELEGRAM_TRANSIENT_ERRORS:
+        log.warning("Telegram audio upload timed out; retrying once")
+        await asyncio.sleep(1.0)
+        try:
+            audio_file = InputFile(BytesIO(wav_bytes), filename="reply.wav")
+            await update.message.reply_audio(audio_file, title="Last reply")
+        except Exception:
+            log.exception("Failed to send TTS audio after retry")
+            await update.message.reply_text(
+                "Audio was generated but failed to upload. Try again."
+            )
+    except TelegramError:
+        log.exception("Failed to send TTS audio")
+        await update.message.reply_text(
+            "Audio was generated but failed to upload. Try again."
+        )
 
 
 async def cmd_openrouter_balance(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1010,9 +1078,9 @@ BOT_COMMANDS = [
     BotCommand("search", "Toggle web search (on|off)"),
     BotCommand("remember", "Save a note to memory"),
     BotCommand("memory", "Show what I remember"),
-    BotCommand("forget", "Wipe memory (backs up first)"),
     BotCommand("model", "Switch LLM model"),
     BotCommand("cheap", "Use 3.1 flash lite (cheaper)"),
+    BotCommand("read", "Read last reply aloud"),
     BotCommand("openrouter_balance", "Check OpenRouter remaining credits"),
 ]
 
@@ -1054,9 +1122,9 @@ def main() -> None:
     app.add_handler(CommandHandler("search", cmd_search))
     app.add_handler(CommandHandler("remember", cmd_remember))
     app.add_handler(CommandHandler("memory", cmd_memory))
-    app.add_handler(CommandHandler("forget", cmd_forget))
     app.add_handler(CommandHandler("model", cmd_model))
     app.add_handler(CommandHandler("cheap", cmd_cheap))
+    app.add_handler(CommandHandler("read", cmd_read))
     app.add_handler(CommandHandler("openrouter_balance", cmd_openrouter_balance))
     app.add_handler(
         MessageHandler(

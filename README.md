@@ -18,8 +18,17 @@ A Telegram bot that acts as a long-term AI assistant with persistent memory. Fir
 2. **Install dependencies**:
 
    ```bash
+   pip install torch --index-url https://download.pytorch.org/whl/cpu
    pip install -r requirements.txt
    ```
+
+   On Debian/Ubuntu, install **espeak-ng** (required by Kokoro for English G2P):
+
+   ```bash
+   sudo apt install espeak-ng
+   ```
+
+   The first `/read` downloads Kokoro model weights (~300 MB) and spaCy `en_core_web_sm` automatically.
 
 3. **Configure env**:
 
@@ -31,6 +40,8 @@ A Telegram bot that acts as a long-term AI assistant with persistent memory. Fir
 
    - `TELEGRAM_BOT_TOKEN` — from [@BotFather](https://t.me/BotFather)
    - `OPENROUTER_API_KEY` — from [OpenRouter](https://openrouter.ai/)
+   - `TTS_VOICE` — optional; Kokoro voice for `/read` (default `bm_george`; American: `am_michael`, `am_fenrir`, …)
+   - `TTS_ENABLED` — optional; set to `false` to disable `/read` (default `true`)
 
 4. **Run the bot**:
 
@@ -47,9 +58,9 @@ A Telegram bot that acts as a long-term AI assistant with persistent memory. Fir
 | `/search on\|off` | Turn web search on or off for this conversation |
 | `/remember <text>` | Manually add a note to memory |
 | `/memory` | Show what the bot remembers |
-| `/forget` | Wipe memory (creates a timestamped backup for both canonical and recent files first) |
 | `/model <slug>` | Switch model: `mid` / `cheap` / `max`, or a full OpenRouter model slug |
 | `/cheap` | Shortcut to switch to the cheap model (gemini-3.1-flash-lite) |
+| `/read` | Text-to-speech: read the bot’s last reply aloud (Kokoro-82M) |
 | `/openrouter_balance` | Check usage and remaining limit for the current `OPENROUTER_API_KEY` |
 
 ## How memory works
@@ -80,12 +91,13 @@ This seed becomes the starting point for `data/<agent>.md` after the architectur
 ```
 agent-coach/
   bot.py                # Telegram entry point + command handlers
-  config.py             # Env, defaults, data dir, MEMORY_WRITER_MODE
+  config.py             # Env, defaults, data dir, MEMORY_WRITER_MODE, TTS settings
   llm.py                # OpenRouter HTTP client + propose_memory_ops
-  memory.py             # Memory facade (load, append, forget, extract_and_save)
+  memory.py             # Memory facade (load, append, extract_and_save)
   memory_writer.py      # Structured writer: validate, apply, audit, prune
   memory_ops.py         # Strict JSON operation schema + validator
   memory_template.py    # Canonical Markdown layout and recent-entry format
+  tts.py                # Markdown cleaning + Kokoro TTS for /read
   agents/
     base.py             # AgentConfig dataclass
     gym_coach.py        # Gym coach persona + system prompt
