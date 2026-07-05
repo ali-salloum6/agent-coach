@@ -633,8 +633,10 @@ async def _conversation_reply(
     stream: bool,
     web_search: bool,
     allow_fallback: bool,
+    model: str | None = None,
 ) -> None:
     """Append user turn, call the model, send reply, schedule memory extraction."""
+    chat_model = model or session["model"]
     session["history"].append({"role": "user", "content": user_content})
 
     await _safe_send_action(update)
@@ -658,7 +660,7 @@ async def _conversation_reply(
         try:
             async for delta in llm.chat_stream(
                 messages=session["history"],
-                model=session["model"],
+                model=chat_model,
                 web_search=web_search,
                 response_meta=response_meta,
                 allow_fallback=allow_fallback,
@@ -696,7 +698,7 @@ async def _conversation_reply(
                         try:
                             reply = await llm.chat(
                                 messages=session["history"],
-                                model=session["model"],
+                                model=chat_model,
                                 web_search=web_search,
                                 response_meta=response_meta,
                                 allow_fallback=allow_fallback,
@@ -754,7 +756,7 @@ async def _conversation_reply(
         try:
             reply = await llm.chat(
                 messages=session["history"],
-                model=session["model"],
+                model=chat_model,
                 web_search=web_search,
                 response_meta=response_meta,
                 allow_fallback=allow_fallback,
@@ -773,7 +775,7 @@ async def _conversation_reply(
                 await asyncio.sleep(1.0)
                 reply = await llm.chat(
                     messages=session["history"],
-                    model=session["model"],
+                    model=chat_model,
                     web_search=web_search,
                     response_meta=response_meta,
                     allow_fallback=allow_fallback,
@@ -846,7 +848,7 @@ async def _conversation_reply(
             parse_mode="HTML",
         )
 
-    asyncio.create_task(_background_extract(memory_user_text, reply))
+    asyncio.create_task(_background_extract(memory_user_text, reply, chat_model))
 
     if config.TTS_ENABLED and session["tts"]:
         asyncio.create_task(_background_tts(update, reply))
@@ -989,6 +991,7 @@ async def _handle_image_bundle(
         stream=False,
         web_search=False,
         allow_fallback=False,
+        model=config.VISION_MODEL,
     )
 
 
@@ -1130,9 +1133,11 @@ async def _send_reply(update: Update, text: str) -> None:
         await _telegram_reply(update.message, chunk_html, parse_mode="HTML")
 
 
-async def _background_extract(user_text: str, assistant_reply: str) -> None:
+async def _background_extract(user_text: str, assistant_reply: str, chat_model: str) -> None:
     try:
-        await memory.extract_and_save(AGENT.slug, user_text, assistant_reply)
+        await memory.extract_and_save(
+            AGENT.slug, user_text, assistant_reply, chat_model=chat_model
+        )
     except Exception:
         log.exception("Memory extraction failed (non-fatal)")
 

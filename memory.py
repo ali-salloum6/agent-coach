@@ -69,6 +69,8 @@ async def extract_and_save(
     agent_slug: str,
     user_message: str,
     assistant_response: str,
+    *,
+    chat_model: str,
 ) -> None:
     """Run after every successful exchange. Honors `MEMORY_WRITER_MODE`."""
     mode = config.MEMORY_WRITER_MODE
@@ -77,7 +79,7 @@ async def extract_and_save(
             agent_slug,
             user_message,
             assistant_response,
-            writer_model=config.MEMORY_WRITER_MODEL,
+            writer_model=chat_model,
         )
         if result.parse_error:
             log.warning(
@@ -106,7 +108,7 @@ async def extract_and_save(
         agent_slug,
         user_message,
         assistant_response,
-        writer_model=config.MEMORY_WRITER_MODEL,
+        writer_model=chat_model,
     )
 
 

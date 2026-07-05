@@ -74,7 +74,7 @@ class RoutingTests(MemoryWriterTestBase):
         }
         with patch("memory_writer.llm.propose_memory_ops", _llm_returns(payload)):
             result = await memory_writer.propose_and_apply(
-                "gym_coach", user, asst, timestamp=NOW
+                "gym_coach", user, asst, timestamp=NOW, writer_model=config.DEFAULT_MODEL
             )
         self.assertEqual(result.accepted, 1)
         canonical = self._canonical().read_text(encoding="utf-8")
@@ -103,7 +103,7 @@ class RoutingTests(MemoryWriterTestBase):
         }
         with patch("memory_writer.llm.propose_memory_ops", _llm_returns(payload)):
             result = await memory_writer.propose_and_apply(
-                "gym_coach", user, asst, timestamp=NOW
+                "gym_coach", user, asst, timestamp=NOW, writer_model=config.DEFAULT_MODEL
             )
         self.assertEqual(result.accepted, 1)
         recent = self._recent().read_text(encoding="utf-8")
@@ -130,7 +130,7 @@ class AntiFloodAndRetentionTests(MemoryWriterTestBase):
         }
         with patch("memory_writer.llm.propose_memory_ops", _llm_returns(payload)):
             await memory_writer.propose_and_apply(
-                "gym_coach", user, asst, timestamp=NOW
+                "gym_coach", user, asst, timestamp=NOW, writer_model=config.DEFAULT_MODEL
             )
         canonical = self._canonical().read_text(encoding="utf-8")
         recent = self._recent().read_text(encoding="utf-8")
@@ -161,7 +161,7 @@ class AntiFloodAndRetentionTests(MemoryWriterTestBase):
         payload = {"ops": [{"op": "noop", "reason": "nothing"}]}
         with patch("memory_writer.llm.propose_memory_ops", _llm_returns(payload)):
             result = await memory_writer.propose_and_apply(
-                "gym_coach", "user msg", "asst reply", timestamp=NOW
+                "gym_coach", "user msg", "asst reply", timestamp=NOW, writer_model=config.DEFAULT_MODEL
             )
         self.assertGreaterEqual(result.pruned_recent, 1)
         self.assertNotIn(
@@ -191,7 +191,7 @@ class AntiFloodAndRetentionTests(MemoryWriterTestBase):
         asst = "ok"
         with patch("memory_writer.llm.propose_memory_ops", _llm_returns(payload)):
             result = await memory_writer.propose_and_apply(
-                "gym_coach", user, asst, timestamp=NOW
+                "gym_coach", user, asst, timestamp=NOW, writer_model=config.DEFAULT_MODEL
             )
         self.assertEqual(result.accepted, 5)
         self.assertGreaterEqual(result.rejected, 3)
@@ -227,7 +227,7 @@ class SupersedeTests(MemoryWriterTestBase):
         }
         with patch("memory_writer.llm.propose_memory_ops", _llm_returns(payload)):
             result = await memory_writer.propose_and_apply(
-                "gym_coach", user, asst, timestamp=NOW
+                "gym_coach", user, asst, timestamp=NOW, writer_model=config.DEFAULT_MODEL
             )
         self.assertEqual(result.accepted, 1)
         new_md = canonical_path.read_text(encoding="utf-8")
@@ -265,7 +265,7 @@ class AuditLogTests(MemoryWriterTestBase):
         }
         with patch("memory_writer.llm.propose_memory_ops", _llm_returns(payload)):
             await memory_writer.propose_and_apply(
-                "gym_coach", "I weighed 95 kg.", "ok", timestamp=NOW
+                "gym_coach", "I weighed 95 kg.", "ok", timestamp=NOW, writer_model=config.DEFAULT_MODEL
             )
         audit_text = self._audit().read_text(encoding="utf-8").strip().splitlines()
         self.assertEqual(len(audit_text), 1)

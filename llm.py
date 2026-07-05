@@ -31,6 +31,14 @@ def _assistant_content_to_text(content: object) -> str:
     return str(content)
 
 
+def _reasoning_for_model(model: str) -> dict | None:
+    if model.startswith("z-ai/glm-"):
+        return {"effort": "max"}
+    if model.startswith("google/"):
+        return {"effort": "medium"}
+    return None
+
+
 def _build_request_body(messages: list[dict], model: str, web_search: bool) -> dict:
     body: dict = {
         "model": model,
@@ -38,9 +46,8 @@ def _build_request_body(messages: list[dict], model: str, web_search: bool) -> d
     }
     if web_search:
         body["plugins"] = [{"id": "web"}]
-    # OpenRouter: maps effort → Google thinkingLevel for Gemini 3.x; skip for non-Google fallbacks.
-    if model.startswith("google/"):
-        body["reasoning"] = {"effort": "medium"}
+    if reasoning := _reasoning_for_model(model):
+        body["reasoning"] = reasoning
     return body
 
 
@@ -372,7 +379,7 @@ async def propose_memory_ops(
     active_plans: str,
     recent_memory_visible: str,
     timestamp_iso: str,
-    model: str | None = None,
+    model: str,
     writer_context: str = "a long-term Telegram coach",
 ) -> str:
     """Ask the writer model to propose strict JSON memory operations.
@@ -458,10 +465,9 @@ async def propose_memory_ops(
         f"{assistant_response}\n"
     )
 
-    chosen_model = model or config.MEMORY_WRITER_MODEL
     return await chat(
         messages=[{"role": "user", "content": prompt}],
-        model=chosen_model,
+        model=model,
         allow_fallback=False,
         # Gemini Pro with medium reasoning can take 60-180s on the
         # occasional turn; give it real headroom for the writer path.

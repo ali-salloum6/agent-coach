@@ -130,7 +130,7 @@ async def propose_and_apply(
     assistant_response: str,
     *,
     timestamp: datetime | None = None,
-    writer_model: str | None = None,
+    writer_model: str,
 ) -> ApplyResult:
     """Full pipeline: prompt model, validate, apply, audit, prune.
 

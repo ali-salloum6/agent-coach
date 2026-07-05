@@ -279,8 +279,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--writer-model",
-        default=config.MEMORY_WRITER_MODEL,
-        help=f"Writer model (default: {config.MEMORY_WRITER_MODEL}).",
+        default=config.DEFAULT_MODEL,
+        help=f"Writer model (default: {config.DEFAULT_MODEL}).",
     )
     parser.add_argument(
         "--no-backup",
