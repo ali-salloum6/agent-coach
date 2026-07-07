@@ -10,6 +10,16 @@ import config
 
 log = logging.getLogger(__name__)
 
+if config.OPENROUTER_HTTP_PROXY:
+    log.info("OpenRouter client using HTTP proxy")
+
+
+def _httpx_client(timeout: float) -> httpx.AsyncClient:
+    kwargs: dict = {"timeout": timeout}
+    if config.OPENROUTER_HTTP_PROXY:
+        kwargs["proxy"] = config.OPENROUTER_HTTP_PROXY
+    return httpx.AsyncClient(**kwargs)
+
 
 def _assistant_content_to_text(content: object) -> str:
     """Normalize OpenRouter/OpenAI message.content (str or multimodal parts) to plain text."""
@@ -84,7 +94,7 @@ async def chat(
     current_model = model
     requested_model = model
 
-    async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+    async with _httpx_client(timeout_seconds) as client:
         while True:
             body = _build_request_body(messages, current_model, web_search)
             resp = await client.post(config.OPENROUTER_BASE_URL, json=body, headers=headers)
@@ -162,7 +172,7 @@ async def get_openrouter_credits() -> dict:
         "Authorization": f"Bearer {config.OPENROUTER_API_KEY}",
         "Content-Type": "application/json",
     }
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with _httpx_client(30) as client:
         resp = await client.get(config.OPENROUTER_CREDITS_URL, headers=headers)
         if resp.is_error:
             log.error(
@@ -190,7 +200,7 @@ async def get_openrouter_key_info() -> dict:
         "Authorization": f"Bearer {config.OPENROUTER_API_KEY}",
         "Content-Type": "application/json",
     }
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with _httpx_client(30) as client:
         resp = await client.get(config.OPENROUTER_KEY_INFO_URL, headers=headers)
         if resp.is_error:
             log.error(
@@ -226,7 +236,7 @@ async def _chat_stream_attempt(
     body["stream"] = True
     headers = _request_headers()
 
-    async with httpx.AsyncClient(timeout=120) as client:
+    async with _httpx_client(120) as client:
         async with client.stream(
             "POST", config.OPENROUTER_BASE_URL, json=body, headers=headers
         ) as resp:
