@@ -6,8 +6,11 @@ from dotenv import load_dotenv
 load_dotenv()
 
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
-# Optional HTTP(S) proxy for python-telegram-bot only (e.g. http://10.8.0.1:8888 via WireGuard + tinyproxy).
+# Optional HTTP(S) proxy (e.g. http://10.8.0.1:8888 via WireGuard + tinyproxy).
+# Used for Telegram Bot API; also defaults OpenRouter egress unless overridden below.
 TELEGRAM_HTTP_PROXY = os.environ.get("TELEGRAM_HTTP_PROXY", "").strip() or None
+_openrouter_proxy = os.environ.get("OPENROUTER_HTTP_PROXY", "").strip()
+OPENROUTER_HTTP_PROXY = _openrouter_proxy or TELEGRAM_HTTP_PROXY
 OPENROUTER_API_KEY = os.environ["OPENROUTER_API_KEY"]
 ACTIVE_AGENT = os.environ.get("ACTIVE_AGENT", "gym_coach").strip() or "gym_coach"
 
