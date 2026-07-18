@@ -154,12 +154,18 @@ def _normalize_date(value: Any) -> tuple[str | None, str | None]:
 def _evidence_in_source(evidence: str, source_text: str) -> bool:
     """Return True if `evidence` appears in `source_text` (after light normalization).
 
-    Models occasionally add/remove smart quotes or normalize whitespace, so
-    we compare with collapsed whitespace and unicode-quote substitution.
+    Models occasionally add/remove smart quotes, markdown emphasis, or normalize
+    whitespace, so we compare with those stripped (e.g. ``**Total:**`` vs
+    ``Total:``).
     """
     def _norm(s: str) -> str:
         s = s.replace("\u2018", "'").replace("\u2019", "'")
         s = s.replace("\u201c", '"').replace("\u201d", '"')
+        # Strip common markdown so ``**Total so far:**`` matches ``Total so far:``.
+        s = re.sub(r"\*\*([^*]+)\*\*", r"\1", s)
+        s = re.sub(r"__([^_]+)__", r"\1", s)
+        s = re.sub(r"(?<!\w)\*([^*]+)\*(?!\w)", r"\1", s)
+        s = re.sub(r"`([^`]+)`", r"\1", s)
         s = re.sub(r"\s+", " ", s)
         return s.strip().lower()
 

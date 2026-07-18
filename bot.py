@@ -250,7 +250,7 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         "/model &lt;slug&gt; — switch LLM model\n"
         "/cheap — use 3.1 flash lite (cheaper)\n"
         "/openrouter_balance — check OpenRouter remaining credits\n"
-        "/read on|off — auto-read replies aloud (on by default)\n\n"
+        "/read — read the last reply aloud (/read on|off for auto-read)\n\n"
         "Send <b>photos</b> or image files with optional captions; photo albums are "
         "grouped into one message for the model.\n\n"
         f"Current model: <code>{model}</code>",
@@ -475,27 +475,19 @@ async def cmd_read(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("Text-to-speech is disabled.")
         return
 
-    if not ctx.args:
-        status = "on" if session["tts"] else "off"
-        await update.message.reply_text(
-            f"Auto-read is <b>{status}</b>. Each reply includes audio when on.\n"
-            "/read on|off — toggle · /read last — replay last reply",
-            parse_mode="HTML",
-        )
-        return
-
-    flag = ctx.args[0].lower()
-    if flag == "on":
-        session["tts"] = True
-        await update.message.reply_text("Auto-read <b>enabled</b>.", parse_mode="HTML")
-        return
-    if flag == "off":
-        session["tts"] = False
-        await update.message.reply_text("Auto-read <b>disabled</b>.", parse_mode="HTML")
-        return
-    if flag != "last":
-        await update.message.reply_text("Usage: /read on|off · /read last")
-        return
+    if ctx.args:
+        flag = ctx.args[0].lower()
+        if flag == "on":
+            session["tts"] = True
+            await update.message.reply_text("Auto-read <b>enabled</b>.", parse_mode="HTML")
+            return
+        if flag == "off":
+            session["tts"] = False
+            await update.message.reply_text("Auto-read <b>disabled</b>.", parse_mode="HTML")
+            return
+        if flag not in ("last",):
+            await update.message.reply_text("Usage: /read · /read on|off")
+            return
 
     reply = _last_assistant_reply()
     if not reply:
@@ -1150,7 +1142,7 @@ BOT_COMMANDS = [
     BotCommand("memory", "Show what I remember"),
     BotCommand("model", "Switch LLM model"),
     BotCommand("cheap", "Use 3.1 flash lite (cheaper)"),
-    BotCommand("read", "Auto-read replies aloud (on|off)"),
+    BotCommand("read", "Read the last reply aloud"),
     BotCommand("openrouter_balance", "Check OpenRouter remaining credits"),
 ]
 
