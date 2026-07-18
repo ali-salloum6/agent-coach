@@ -94,6 +94,29 @@ class EvidenceQuoteTests(unittest.TestCase):
         self.assertEqual(res.accepted, [])
         self.assertEqual(len(res.rejected), 1)
 
+    def test_markdown_emphasis_in_source_does_not_block_match(self) -> None:
+        """Plain evidence must match bold/italic wrappers in the assistant reply."""
+        asst = (
+            "Garlic baguette: 550 kcal\n\n"
+            "**Total so far:** 810 calories, 41g protein\n\n"
+            "Plenty of room left."
+        )
+        payload = _payload(
+            {
+                "op": "add_recent_note",
+                "source": "assistant",
+                "date": "2026-07-18",
+                "category": "nutrition",
+                "summary": "Running daily total 810 kcal after baguette.",
+                "evidence_quote": "Total so far: 810 calories, 41g protein",
+                "retention": "recent",
+                "ttl_days": 2,
+            }
+        )
+        res = memory_ops.validate(payload, user_message="The 30g version", assistant_response=asst)
+        self.assertEqual(len(res.accepted), 1, res.rejected)
+        self.assertEqual(res.rejected, [])
+
 
 class SourceOpRules(unittest.TestCase):
     def test_assistant_cannot_create_current_fact(self) -> None:
