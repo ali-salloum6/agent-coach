@@ -27,6 +27,7 @@ from telegram.error import BadRequest, NetworkError, TelegramError, TimedOut
 import config
 import llm
 import memory
+import session_store
 import tts
 from agents.registry import get_agent
 
@@ -217,6 +218,14 @@ def _is_allowed_user(update: Update) -> bool:
     return False
 
 
+def _persist_session() -> None:
+    """Write the in-memory session to disk (non-fatal on failure)."""
+    try:
+        session_store.save(AGENT.slug, session)
+    except Exception:
+        log.exception("Failed to persist session (non-fatal)")
+
+
 def _reset_session(model: str | None = None) -> None:
     # Prune expired recent notes BEFORE building the prompt so the model
     # never sees stale TTL entries on a fresh conversation.
@@ -226,12 +235,34 @@ def _reset_session(model: str | None = None) -> None:
             log.info("Pruned %d expired recent notes on /new", pruned)
     except Exception:
         log.exception("Pruning recent notes failed (non-fatal)")
+    # Drop the previous on-disk conversation before building a fresh one.
+    session_store.clear(AGENT.slug)
     mem = memory.load(AGENT.slug)
     system_prompt = AGENT.build_system_prompt(mem)
     session["model"] = model or AGENT.default_model
     session["history"] = [{"role": "system", "content": system_prompt}]
     session["web_search"] = False
     session["tts"] = config.TTS_AUTO_READ
+    _persist_session()
+
+
+def _load_session_or_reset() -> None:
+    """Restore the last conversation from disk, or start fresh with memory."""
+    loaded = session_store.load(AGENT.slug)
+    if loaded is None:
+        log.info("No persisted session for %s; starting fresh", AGENT.slug)
+        _reset_session()
+        return
+    session["model"] = loaded["model"]
+    session["history"] = loaded["history"]
+    session["web_search"] = loaded["web_search"]
+    session["tts"] = loaded["tts"]
+    log.info(
+        "Restored session for %s (%d messages, model=%s)",
+        AGENT.slug,
+        len(session["history"]),
+        session["model"],
+    )
 
 
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -278,6 +309,7 @@ async def cmd_new(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     _reset_session(model)
     if search_on:
         session["web_search"] = True
+        _persist_session()
     model_esc = html.escape(session["model"])
     msg = f"Fresh conversation started.\nModel: <code>{model_esc}</code>"
     if session["web_search"]:
@@ -295,9 +327,11 @@ async def cmd_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     flag = ctx.args[0].lower()
     if flag == "on":
         session["web_search"] = True
+        _persist_session()
         await update.message.reply_text("Web search <b>enabled</b> for this conversation.", parse_mode="HTML")
     elif flag == "off":
         session["web_search"] = False
+        _persist_session()
         await update.message.reply_text("Web search <b>disabled</b>.", parse_mode="HTML")
     else:
         await update.message.reply_text("Usage: /search on|off")
@@ -351,6 +385,7 @@ async def cmd_model(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         session["model"] = config.DEFAULT_MODEL
     else:
         session["model"] = ctx.args[0]
+    _persist_session()
     model_esc = html.escape(session["model"])
     await update.message.reply_text(
         f"Model switched to <code>{model_esc}</code>",
@@ -362,6 +397,7 @@ async def cmd_cheap(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_allowed_user(update):
         return
     session["model"] = config.CHEAP_MODEL
+    _persist_session()
     model_esc = html.escape(config.CHEAP_MODEL)
     await update.message.reply_text(
         f"Switched to cheap model: <code>{model_esc}</code>",
@@ -479,10 +515,12 @@ async def cmd_read(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         flag = ctx.args[0].lower()
         if flag == "on":
             session["tts"] = True
+            _persist_session()
             await update.message.reply_text("Auto-read <b>enabled</b>.", parse_mode="HTML")
             return
         if flag == "off":
             session["tts"] = False
+            _persist_session()
             await update.message.reply_text("Auto-read <b>disabled</b>.", parse_mode="HTML")
             return
         if flag not in ("last",):
@@ -830,6 +868,8 @@ async def _conversation_reply(
                 + "\n\n(Images were attached; the model saw them for this reply only.)"
             )
 
+    _persist_session()
+
     await _send_reply(update, reply)
 
     if fallback_info := response_meta.get("fallback_used"):
@@ -1071,6 +1111,7 @@ async def _handle_app_error(update: object, context: ContextTypes.DEFAULT_TYPE) 
 
     if session["history"] and session["history"][-1].get("role") == "user":
         session["history"].pop()
+        _persist_session()
 
     if not isinstance(update, Update):
         return
@@ -1155,6 +1196,11 @@ async def _set_commands(application) -> None:
             log.info("Pruned %d expired recent notes on startup", pruned)
     except Exception:
         log.exception("Startup prune of recent notes failed (non-fatal)")
+    try:
+        _load_session_or_reset()
+    except Exception:
+        log.exception("Session restore failed; starting fresh")
+        _reset_session()
 
 
 def _telegram_request() -> HTTPXRequest:
