@@ -55,7 +55,7 @@ A Telegram bot that acts as a long-term AI assistant with persistent memory. Fir
 | Command | Description |
 |--------|-------------|
 | `/start` | Welcome message and command list |
-| `/new [model\|cheap\|mid\|max]` | Start a fresh conversation; loads memory. Optional: `cheap` / `mid` / `max` (max = default model + web search on), or a full OpenRouter model slug |
+| `/new [model\|cheap\|mid\|max]` | Start a fresh conversation; loads memory and clears the persisted session. Optional: `cheap` / `mid` / `max` (max = default model + web search on), or a full OpenRouter model slug |
 | `/search on\|off` | Turn web search on or off for this conversation |
 | `/remember <text>` | Manually add a note to memory |
 | `/memory` | Show what the bot remembers |
@@ -72,7 +72,8 @@ A Telegram bot that acts as a long-term AI assistant with persistent memory. Fir
   - `data/<agent>.recent.md` for short-lived `add_recent_note` entries with a TTL of 2/7/14/30 days (default 2 for one-off details, 7 for short-term context). Same-day assistant plans referencing "today", "tonight", "this evening", "right now" are automatically downgraded from `long_term` to `recent` retention.
 - **Auto-expiration**: Expired recent notes are pruned **automatically** — on bot startup, on every `/new`, and whenever memory is loaded for the prompt. There is no manual review.
 - **Manual**: `/remember <text>` appends a timestamped note under `## Manual Notes`.
-- On `/new`, canonical memory plus non-expired recent notes are injected into the **system prompt** under "What you remember about the user".
+- On `/new`, canonical memory plus non-expired recent notes are injected into the **system prompt** under "What you remember about the user". The previous chat session file (`data/<agent>.session.json`) is deleted and replaced.
+- **Session persistence**: The running conversation (history + model/search/tts flags) is saved to `data/<agent>.session.json` after each reply and restored on bot restart, so apt/OOM restarts no longer wipe the chat.
 - **Audit**: Every accepted/rejected operation is recorded in `data/<agent>.memory_ops.jsonl` for debugging.
 - **Rollback**: Set `MEMORY_WRITER_MODE=legacy` to fall back to the old free-form extractor temporarily.
 
