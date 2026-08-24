@@ -1,5 +1,7 @@
 import os
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 
@@ -43,6 +45,27 @@ RATE_LIMIT_FALLBACK: dict[str, str] = {
 
 DATA_DIR = Path(__file__).parent / "data"
 DATA_DIR.mkdir(exist_ok=True)
+
+# Local timezone for memory timestamps, message context, and writer prompts.
+# IANA name, e.g. Europe/Moscow, Asia/Shanghai, UTC.
+_memory_tz_name = (
+    os.environ.get("MEMORY_TIMEZONE", "Europe/Moscow").strip() or "Europe/Moscow"
+)
+MEMORY_TIMEZONE = ZoneInfo(_memory_tz_name)
+MEMORY_TIMEZONE_LABEL = _memory_tz_name.rsplit("/", 1)[-1].replace("_", " ")
+
+
+def local_now() -> datetime:
+    return datetime.now(MEMORY_TIMEZONE)
+
+
+def format_local_time(dt: datetime | None = None, *, with_label: bool = True) -> str:
+    """Format a datetime in MEMORY_TIMEZONE for user-facing strings."""
+    when = (dt or local_now()).astimezone(MEMORY_TIMEZONE)
+    base = when.strftime("%Y-%m-%d %H:%M")
+    if with_label:
+        return f"{base} {MEMORY_TIMEZONE_LABEL}"
+    return base
 
 # Vision / Telegram media (per user turn)
 MAX_VISION_IMAGES = int(os.environ.get("MAX_VISION_IMAGES", "10"))
