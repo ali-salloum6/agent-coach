@@ -24,8 +24,6 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from zoneinfo import ZoneInfo
-
 import config
 import llm
 import memory_ops
@@ -33,8 +31,6 @@ import memory_template
 from agents.registry import get_agent
 
 log = logging.getLogger(__name__)
-
-MOSCOW = ZoneInfo("Europe/Moscow")
 
 
 def _canonical_path(agent_slug: str) -> Path:
@@ -138,7 +134,7 @@ async def propose_and_apply(
     so the background task can swallow errors safely.
     """
     ensure_files(agent_slug)
-    now_dt = (timestamp or datetime.now(MOSCOW)).astimezone(MOSCOW)
+    now_dt = (timestamp or config.local_now()).astimezone(config.MEMORY_TIMEZONE)
 
     pruned = prune_recent(agent_slug, now=now_dt)
     result = ApplyResult(pruned_recent=pruned)
@@ -247,7 +243,7 @@ async def propose_and_apply(
 def _format_date_prefix(op: memory_ops.ValidatedOp, now: datetime) -> str:
     if op.date:
         return op.date
-    return now.astimezone(MOSCOW).strftime("%Y-%m-%d")
+    return now.astimezone(config.MEMORY_TIMEZONE).strftime("%Y-%m-%d")
 
 
 def _render_value_unit(op: memory_ops.ValidatedOp) -> str:
@@ -386,7 +382,7 @@ def _supersede_or_adopt(
     in place too so we don't lose context — `## Superseded / Historical`
     accumulates the audit trail.
     """
-    timestamp = now.astimezone(MOSCOW).strftime("%Y-%m-%d %H:%M")
+    timestamp = now.astimezone(config.MEMORY_TIMEZONE).strftime("%Y-%m-%d %H:%M")
     annotation = (
         f"  - [{timestamp}] status={new_status} — {note.strip()}"
     )

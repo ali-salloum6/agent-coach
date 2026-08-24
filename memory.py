@@ -10,9 +10,7 @@ with non-expired recent notes and prunes the recent file automatically.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 import config
 import llm
@@ -20,12 +18,6 @@ import memory_template
 import memory_writer
 
 log = logging.getLogger(__name__)
-
-MOSCOW = ZoneInfo("Europe/Moscow")
-
-
-def _now_moscow() -> datetime:
-    return datetime.now(MOSCOW)
 
 
 def _canonical_path(agent_slug: str) -> Path:
@@ -53,8 +45,7 @@ def append(agent_slug: str, text: str) -> None:
     """Manual `/remember` entry appended to the canonical `Manual Notes` section."""
     memory_writer.ensure_files(agent_slug)
     canonical_path = _canonical_path(agent_slug)
-    timestamp = _now_moscow().strftime("%Y-%m-%d %H:%M")
-    body = f"- [{timestamp} Moscow] {text.strip()}\n"
+    body = f"- [{config.format_local_time()}] {text.strip()}\n"
     markdown = canonical_path.read_text(encoding="utf-8")
     new_md = memory_template.append_under_heading(
         markdown,
@@ -132,7 +123,7 @@ async def _legacy_extract_and_save(
         return
     path = _canonical_path(agent_slug)
     memory_writer.ensure_files(agent_slug)
-    timestamp = _now_moscow().strftime("%Y-%m-%d %H:%M")
+    timestamp = config.format_local_time(with_label=False)
     entry = f"\n### Auto-extracted [{timestamp}]\n{new_facts}\n"
     with path.open("a", encoding="utf-8") as f:
         f.write(entry)

@@ -456,7 +456,7 @@ async def propose_memory_ops(
         f"You are the structured memory writer for {writer_context}.\n"
         "Decide what (if anything) is worth saving from one user/assistant exchange.\n"
         "Return JSON ONLY in the form {\"ops\": [...]}; no prose, no fences.\n\n"
-        f"Current timestamp (Moscow): {timestamp_iso}\n\n"
+        f"Current timestamp ({config.MEMORY_TIMEZONE_LABEL}): {timestamp_iso}\n\n"
         f"{schema_block}\n"
         f"{required_fields}\n\n"
         f"{rules}\n\n"

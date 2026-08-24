@@ -22,9 +22,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable
-from zoneinfo import ZoneInfo
 
-MOSCOW = ZoneInfo("Europe/Moscow")
+import config
 
 # Stable top-level sections (in display order).
 CANONICAL_SECTIONS: tuple[str, ...] = (
@@ -98,8 +97,8 @@ _RECENT_META_RE = re.compile(
 )
 
 
-def now_moscow() -> datetime:
-    return datetime.now(MOSCOW)
+def now_local() -> datetime:
+    return config.local_now()
 
 
 def _agent_title(agent_slug: str) -> str:
@@ -257,10 +256,14 @@ class RecentEntry:
             f"category={self.category} "
             f"source={self.source} -->"
         )
-        created_local = self.created.astimezone(MOSCOW).strftime("%Y-%m-%d %H:%M")
-        expires_local = self.expires.astimezone(MOSCOW).strftime("%Y-%m-%d %H:%M")
+        created_local = self.created.astimezone(config.MEMORY_TIMEZONE).strftime(
+            "%Y-%m-%d %H:%M"
+        )
+        expires_local = self.expires.astimezone(config.MEMORY_TIMEZONE).strftime(
+            "%Y-%m-%d %H:%M"
+        )
         bullet = (
-            f"- [{created_local} Moscow | expires {expires_local} | "
+            f"- [{created_local} {config.MEMORY_TIMEZONE_LABEL} | expires {expires_local} | "
             f"{self.category} · {self.source}] {self.summary.strip()}"
         )
         return f"{meta}\n{bullet}\n"
@@ -274,7 +277,7 @@ def build_recent_entry(
     ttl_days: int,
     now: datetime | None = None,
 ) -> RecentEntry:
-    created = (now or now_moscow()).astimezone(MOSCOW)
+    created = (now or now_local()).astimezone(config.MEMORY_TIMEZONE)
     expires = created + timedelta(days=ttl_days)
     return RecentEntry(
         created=created,

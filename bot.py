@@ -645,7 +645,7 @@ def _openrouter_image_part(raw: bytes, mime_type: str) -> dict:
 
 def _vision_memory_summary(ts: str, captions: list[str | None]) -> str:
     lines = [
-        f"[Sent at {ts} Moscow]",
+        f"[Sent at {ts}]",
         f"User sent {len(captions)} image(s).",
     ]
     for i, cap in enumerate(captions, start=1):
@@ -893,7 +893,7 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
     if not user_text:
         return
 
-    ts = datetime.now(ZoneInfo("Europe/Moscow")).strftime("%Y-%m-%d %H:%M Moscow")
+    ts = config.format_local_time()
     await _conversation_reply(
         update,
         ctx,
@@ -960,13 +960,13 @@ async def _handle_image_bundle(
         )
         return
 
-    ts = datetime.now(ZoneInfo("Europe/Moscow")).strftime("%Y-%m-%d %H:%M Moscow")
+    ts = config.format_local_time()
     captions: list[str | None] = [it.get("caption") for it in items]
     memory_user_text = _vision_memory_summary(ts, captions)
 
     content_parts: list[dict] = []
     preamble_lines = [
-        f"[Sent at {ts} Moscow]",
+        f"[Sent at {ts}]",
         f"The user attached {len(items)} image(s).",
     ]
     for i, it in enumerate(items, start=1):
