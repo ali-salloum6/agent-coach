@@ -25,8 +25,8 @@ OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_CREDITS_URL = "https://openrouter.ai/api/v1/credits"
 OPENROUTER_KEY_INFO_URL = "https://openrouter.ai/api/v1/key"
 
-DEFAULT_MODEL = "z-ai/glm-5.2"
-VISION_MODEL = "google/gemini-3.1-pro-preview"
+DEFAULT_MODEL = "z-ai/glm-5.3-flash"
+VISION_MODEL = "google/gemini-3.8-flash"
 EXTRACTION_MODEL = "google/gemini-3.1-flash-lite-preview"
 CHEAP_MODEL = "google/gemini-3.1-flash-lite-preview"
 # "structured" routes through memory_writer.propose_and_apply (the new path).
@@ -37,7 +37,9 @@ MEMORY_WRITER_MODE = (
 
 # On 429 rate limit, retry once with this model instead
 RATE_LIMIT_FALLBACK: dict[str, str] = {
-    "z-ai/glm-5.2": "google/gemini-3.1-pro-preview",
+    "z-ai/glm-5.3-flash": "google/gemini-3.8-flash",
+    "z-ai/glm-5.2": "google/gemini-3.8-flash",
+    "google/gemini-3.8-flash": "z-ai/glm-5",
     "google/gemini-3.1-pro-preview": "z-ai/glm-5",
     "google/gemini-3-flash-preview": "z-ai/glm-5",
     "google/gemini-3.1-flash-lite-preview": "z-ai/glm-5",
