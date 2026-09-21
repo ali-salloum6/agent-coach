@@ -134,3 +134,24 @@ To run multiple bots on the same server (e.g. one gym coach, one German exam coa
 3. `systemctl daemon-reload && systemctl enable --now agent-gym.service agent-german.service`.
 
 Each service will use its own Telegram token, allowed user, and agent persona, while sharing the same codebase.
+
+## Deployment
+
+Production runs on the `tae` host (`217.26.31.20`), from `/root/repo/agent-coach` on `main`.
+Four `systemd` services share that one checkout, each with its own env file:
+
+| Service | EnvironmentFile | Agent |
+| --- | --- | --- |
+| `agent-coach` | `.env.gym` | gym coach |
+| `agent-german` | `.env.german` | German exam coach |
+| `agent-lifecoach` | `.env.lifecoach` | life coach |
+| `agent-supernova` | `.env.supernova` | gym coach (supernova) |
+
+Because the checkout is shared, a code change affects all four — deploy restarts them together:
+
+```bash
+ssh tae 'cd /root/repo/agent-coach && git pull --ff-only && systemctl restart agent-coach agent-german agent-lifecoach agent-supernova'
+```
+
+Env files live only on the server and are not in git. Check health with
+`systemctl status agent-coach` or `journalctl -u agent-coach -n 50`.

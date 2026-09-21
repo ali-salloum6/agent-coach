@@ -26,7 +26,8 @@ OPENROUTER_CREDITS_URL = "https://openrouter.ai/api/v1/credits"
 OPENROUTER_KEY_INFO_URL = "https://openrouter.ai/api/v1/key"
 
 DEFAULT_MODEL = "z-ai/glm-5.3-flash"
-VISION_MODEL = "google/gemini-3.8-flash"
+# GLM 5.3 Flash accepts text + image input, so photo turns stay on the chat model.
+VISION_MODEL = DEFAULT_MODEL
 EXTRACTION_MODEL = "google/gemini-3.1-flash-lite-preview"
 CHEAP_MODEL = "google/gemini-3.1-flash-lite-preview"
 # "structured" routes through memory_writer.propose_and_apply (the new path).
