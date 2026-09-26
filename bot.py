@@ -197,6 +197,9 @@ session: dict = {
 
 STREAM_FLUSH_INTERVAL_SECONDS = 0.25
 STREAM_FLUSH_MIN_CHARS = 24
+# Warn when the conversation (excluding the system prompt) crosses these sizes;
+# long histories make the model mix up stale questions with the current one.
+HISTORY_WARN_THRESHOLDS = (15, 20, 25, 30)
 _draft_id_counter = itertools.count(start=int(time.time()))
 
 _album_lock = asyncio.Lock()
@@ -884,6 +887,17 @@ async def _conversation_reply(
 
     if config.TTS_ENABLED and session["tts"]:
         asyncio.create_task(_background_tts(update, reply))
+
+    # Each turn adds 2 messages, so check for crossing a threshold, not equality.
+    msg_count = len(session["history"]) - 1
+    if any(msg_count - 2 < t <= msg_count for t in HISTORY_WARN_THRESHOLDS):
+        try:
+            await update.message.reply_text(
+                f"⚠️ This conversation has {msg_count} messages in history. "
+                "Long histories make replies less reliable — consider /new."
+            )
+        except Exception:
+            log.exception("Failed to send history-length warning (non-fatal)")
 
 
 async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
