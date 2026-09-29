@@ -53,6 +53,8 @@ def _build_request_body(messages: list[dict], model: str, web_search: bool) -> d
     body: dict = {
         "model": model,
         "messages": messages,
+        "max_tokens": config.MAX_OUTPUT_TOKENS,
+        "provider": {"ignore": config.OPENROUTER_IGNORE_PROVIDERS},
     }
     if web_search:
         body["plugins"] = [{"id": "web"}]

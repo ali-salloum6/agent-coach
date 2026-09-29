@@ -25,6 +25,12 @@ OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_CREDITS_URL = "https://openrouter.ai/api/v1/credits"
 OPENROUTER_KEY_INFO_URL = "https://openrouter.ai/api/v1/key"
 
+# Cap per response (reasoning tokens count toward it). Normal replies are a few
+# hundred tokens; this stops a degenerate stream from running for minutes.
+MAX_OUTPUT_TOKENS = int(os.environ.get("MAX_OUTPUT_TOKENS", "8000"))
+# OpenRouter providers to never route to (Modal served garbage output on 2026-09-29).
+OPENROUTER_IGNORE_PROVIDERS = ["modal"]
+
 DEFAULT_MODEL = "z-ai/glm-5.3-flash"
 # GLM 5.3 Flash accepts text + image input, so photo turns stay on the chat model.
 VISION_MODEL = DEFAULT_MODEL
