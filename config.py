@@ -27,7 +27,7 @@ OPENROUTER_KEY_INFO_URL = "https://openrouter.ai/api/v1/key"
 
 # Cap per response (reasoning tokens count toward it). Normal replies are a few
 # hundred tokens; this stops a degenerate stream from running for minutes.
-MAX_OUTPUT_TOKENS = int(os.environ.get("MAX_OUTPUT_TOKENS", "8000"))
+MAX_OUTPUT_TOKENS = int(os.environ.get("MAX_OUTPUT_TOKENS", "4000"))
 # OpenRouter providers to never route to (Modal served garbage output on 2026-09-29).
 OPENROUTER_IGNORE_PROVIDERS = ["modal"]
 
