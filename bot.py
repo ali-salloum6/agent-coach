@@ -32,6 +32,8 @@ import tts
 from agents.registry import get_agent
 
 MAX_TG_LEN = 4096
+# A reply is never longer than 3 Telegram messages; anything past this is a runaway model.
+MAX_REPLY_CHARS = 3 * MAX_TG_LEN
 TELEGRAM_TRANSIENT_ERRORS = (TimedOut, NetworkError)
 
 
@@ -700,6 +702,8 @@ async def _conversation_reply(
             ):
                 reply_parts.append(delta)
                 pending_chars += len(delta)
+                if sum(map(len, reply_parts)) >= MAX_REPLY_CHARS:
+                    break
 
                 if not can_stream_draft:
                     continue
@@ -859,6 +863,12 @@ async def _conversation_reply(
             return
 
     assert reply is not None
+    if len(reply) > MAX_REPLY_CHARS:
+        log.warning(
+            "Reply truncated from %d to %d chars; starts: %r",
+            len(reply), MAX_REPLY_CHARS, reply[:200],
+        )
+        reply = reply[:MAX_REPLY_CHARS] + "\n\n[reply cut off: too long]"
     if not reply:
         reply = "(empty response)"
     session["history"].append({"role": "assistant", "content": reply})
