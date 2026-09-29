@@ -31,8 +31,8 @@ MAX_OUTPUT_TOKENS = int(os.environ.get("MAX_OUTPUT_TOKENS", "4000"))
 # OpenRouter providers to never route to (Modal served garbage output on 2026-09-29).
 OPENROUTER_IGNORE_PROVIDERS = ["modal"]
 
-DEFAULT_MODEL = "z-ai/glm-5.3-flash"
-# GLM 5.3 Flash accepts text + image input, so photo turns stay on the chat model.
+DEFAULT_MODEL = "openai/gpt-6-luna"
+# GPT-6 Luna accepts text + image input, so photo turns stay on the chat model.
 VISION_MODEL = DEFAULT_MODEL
 EXTRACTION_MODEL = "google/gemini-3.1-flash-lite-preview"
 CHEAP_MODEL = "google/gemini-3.1-flash-lite-preview"
@@ -44,6 +44,7 @@ MEMORY_WRITER_MODE = (
 
 # On 429 rate limit, retry once with this model instead
 RATE_LIMIT_FALLBACK: dict[str, str] = {
+    "openai/gpt-6-luna": "google/gemini-3.8-flash",
     "z-ai/glm-5.3-flash": "google/gemini-3.8-flash",
     "z-ai/glm-5.2": "google/gemini-3.8-flash",
     "google/gemini-3.8-flash": "z-ai/glm-5",
