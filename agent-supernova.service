@@ -1,8 +1,6 @@
 [Unit]
 Description=Telegram AI Coach (gym coach for supernova)
 After=network-online.target
-After=wg-quick@wg0.service
-Wants=wg-quick@wg0.service
 Wants=network-online.target
 
 [Service]

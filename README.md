@@ -137,20 +137,23 @@ Each service will use its own Telegram token, allowed user, and agent persona, w
 
 ## Deployment
 
-Production runs on the `YOUR_OLD_SERVER` host (`YOUR_OLD_SERVER_IP`), from `/root/repo/agent-coach` on `main`.
-Four `systemd` services share that one checkout, each with its own env file:
+Production runs on the `YOUR_SERVER` host (`YOUR_SERVER_IP`), from `/root/repo/agent-coach` on `main`.
+It moved there from `YOUR_OLD_SERVER` on 2026-10-05. The new host reaches Telegram and OpenRouter directly,
+so the env files no longer set `TELEGRAM_HTTP_PROXY` and the units no longer depend on WireGuard.
 
-| Service | EnvironmentFile | Agent |
-| --- | --- | --- |
-| `agent-coach` | `.env.gym` | gym coach |
-| `agent-german` | `.env.german` | German exam coach |
-| `agent-lifecoach` | `.env.lifecoach` | life coach |
-| `agent-supernova` | `.env.supernova` | gym coach (supernova) |
+The `systemd` services share that one checkout, each with its own env file:
 
-Because the checkout is shared, a code change affects all four — deploy restarts them together:
+| Service | EnvironmentFile | Agent | State |
+| --- | --- | --- | --- |
+| `agent-coach` | `.env.gym` | gym coach | enabled |
+| `agent-lifecoach` | `.env.lifecoach` | life coach | enabled |
+| `agent-german` | `.env.german` | German exam coach | installed, disabled |
+| `agent-supernova` | `.env.supernova` | gym coach (supernova) | installed, disabled |
+
+Because the checkout is shared, a code change affects every running bot — deploy restarts them together:
 
 ```bash
-ssh YOUR_OLD_SERVER 'cd /root/repo/agent-coach && git pull --ff-only && systemctl restart agent-coach agent-german agent-lifecoach agent-supernova'
+ssh YOUR_SERVER 'cd /root/repo/agent-coach && git pull --ff-only && systemctl restart agent-coach agent-lifecoach'
 ```
 
 Env files live only on the server and are not in git. Check health with
