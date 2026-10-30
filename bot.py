@@ -199,6 +199,8 @@ session: dict = {
 
 STREAM_FLUSH_INTERVAL_SECONDS = 0.25
 STREAM_FLUSH_MIN_CHARS = 24
+# Draft shown while the model reasons, before any answer text arrives.
+THINKING_DRAFT = "💭 Thinking…"
 # Warn when the conversation (excluding the system prompt) crosses these sizes;
 # long histories make the model mix up stale questions with the current one.
 HISTORY_WARN_THRESHOLDS = (15, 20, 25, 30)
@@ -287,7 +289,7 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         "/cheap — use 3.1 flash lite (cheaper)\n"
         "/openrouter_balance — check OpenRouter remaining credits\n"
         "/read — read the last reply aloud (/read on|off for auto-read)\n\n"
-        "Send <b>photos</b> or image files with optional captions; photo albums are "
+        "Send <b>photos</b>, image files or <b>PDFs</b> with optional captions; albums are "
         "grouped into one message for the model.\n\n"
         f"Current model: <code>{model}</code>",
         parse_mode="HTML",
@@ -648,14 +650,42 @@ def _openrouter_image_part(raw: bytes, mime_type: str) -> dict:
     }
 
 
-def _vision_memory_summary(ts: str, captions: list[str | None]) -> str:
+def _openrouter_pdf_part(raw: bytes, filename: str) -> dict:
+    b64 = base64.standard_b64encode(raw).decode("ascii")
+    return {
+        "type": "file",
+        "file": {
+            "filename": filename,
+            "file_data": f"data:application/pdf;base64,{b64}",
+        },
+    }
+
+
+def _attachment_label(item: dict, index: int) -> str:
+    if item.get("kind") == "pdf":
+        return f"PDF {index} ({item.get('file_name') or 'document.pdf'})"
+    return f"Image {index}"
+
+
+def _attachment_count_text(items: list[dict]) -> str:
+    pdfs = sum(1 for it in items if it.get("kind") == "pdf")
+    images = len(items) - pdfs
+    parts = []
+    if images:
+        parts.append(f"{images} image(s)")
+    if pdfs:
+        parts.append(f"{pdfs} PDF(s)")
+    return " and ".join(parts)
+
+
+def _attachment_memory_summary(ts: str, items: list[dict]) -> str:
     lines = [
         f"[Sent at {ts}]",
-        f"User sent {len(captions)} image(s).",
+        f"User sent {_attachment_count_text(items)}.",
     ]
-    for i, cap in enumerate(captions, start=1):
-        c = (cap or "").strip()
-        lines.append(f"Image {i} caption: {c if c else '(none)'}")
+    for i, it in enumerate(items, start=1):
+        c = (it.get("caption") or "").strip()
+        lines.append(f"{_attachment_label(it, i)} caption: {c if c else '(none)'}")
     return "\n".join(lines)
 
 
@@ -677,6 +707,7 @@ async def _conversation_reply(
     await _safe_send_action(update)
 
     reply_parts: list[str] = []
+    reasoning_parts: list[str] = []
     chat_id = update.effective_chat.id if update.effective_chat else None
     can_stream_draft = (
         stream
@@ -692,18 +723,26 @@ async def _conversation_reply(
     reply: str | None = None
 
     if stream:
+        if can_stream_draft:
+            can_stream_draft = await _send_draft(ctx, chat_id, draft_id, THINKING_DRAFT)
         try:
-            async for delta in llm.chat_stream(
+            async for kind, delta in llm.chat_stream(
                 messages=session["history"],
                 model=chat_model,
                 web_search=web_search,
                 response_meta=response_meta,
                 allow_fallback=allow_fallback,
             ):
-                reply_parts.append(delta)
+                if kind == "reasoning":
+                    # Only shown in the draft until the answer starts; never stored.
+                    if reply_parts:
+                        continue
+                    reasoning_parts.append(delta)
+                else:
+                    reply_parts.append(delta)
+                    if sum(map(len, reply_parts)) >= MAX_REPLY_CHARS:
+                        break
                 pending_chars += len(delta)
-                if sum(map(len, reply_parts)) >= MAX_REPLY_CHARS:
-                    break
 
                 if not can_stream_draft:
                     continue
@@ -716,7 +755,10 @@ async def _conversation_reply(
                 if not should_flush:
                     continue
 
-                partial_text = "".join(reply_parts)[:MAX_TG_LEN]
+                if reply_parts:
+                    partial_text = "".join(reply_parts)[:MAX_TG_LEN]
+                else:
+                    partial_text = _reasoning_draft_text("".join(reasoning_parts))
                 if partial_text.strip():
                     can_stream_draft = await _send_draft(ctx, chat_id, draft_id, partial_text)
                 pending_chars = 0
@@ -784,7 +826,7 @@ async def _conversation_reply(
                 log.exception("LLM stream failed mid-response, using collected partial reply")
                 reply = "".join(reply_parts)
         else:
-            if can_stream_draft and pending_chars > 0:
+            if can_stream_draft and pending_chars > 0 and reply_parts:
                 partial_text = "".join(reply_parts)[:MAX_TG_LEN]
                 if partial_text.strip():
                     await _send_draft(ctx, chat_id, draft_id, partial_text)
@@ -878,7 +920,7 @@ async def _conversation_reply(
         if prev.get("role") == "user" and prev.get("content") is user_content:
             prev["content"] = (
                 memory_user_text
-                + "\n\n(Images were attached; the model saw them for this reply only.)"
+                + "\n\n(Attachments were included; the model saw them for this reply only.)"
             )
 
     _persist_session()
@@ -941,12 +983,12 @@ async def _media_group_flush_worker(key: str, ctx: ContextTypes.DEFAULT_TYPE) ->
     update = state["last_update"]
     items: list[dict] = state["items"]
     try:
-        await _handle_image_bundle(ctx, update, items)
+        await _handle_media_bundle(ctx, update, items)
     except Exception:
         log.exception("Failed to process media group")
         try:
             await update.message.reply_text(
-                "Something went wrong processing your images. Try again or send fewer images."
+                "Something went wrong processing your attachments. Try again or send fewer files."
             )
         except Exception:
             log.exception("Could not send media group error reply")
@@ -970,7 +1012,7 @@ async def _enqueue_album_item(
         st["task"] = asyncio.create_task(_media_group_flush_worker(key, ctx))
 
 
-async def _handle_image_bundle(
+async def _handle_media_bundle(
     ctx: ContextTypes.DEFAULT_TYPE,
     update: Update,
     items: list[dict],
@@ -979,72 +1021,80 @@ async def _handle_image_bundle(
         return
     if len(items) > config.MAX_VISION_IMAGES:
         await update.message.reply_text(
-            f"Too many images in one batch (max {config.MAX_VISION_IMAGES}). "
-            "Send fewer images or split into multiple messages."
+            f"Too many attachments in one batch (max {config.MAX_VISION_IMAGES}). "
+            "Send fewer files or split into multiple messages."
         )
         return
 
     ts = config.format_local_time()
-    captions: list[str | None] = [it.get("caption") for it in items]
-    memory_user_text = _vision_memory_summary(ts, captions)
+    memory_user_text = _attachment_memory_summary(ts, items)
 
     content_parts: list[dict] = []
     preamble_lines = [
         f"[Sent at {ts}]",
-        f"The user attached {len(items)} image(s).",
+        f"The user attached {_attachment_count_text(items)}.",
     ]
     for i, it in enumerate(items, start=1):
         cap = (it.get("caption") or "").strip()
+        label = _attachment_label(it, i)
         if cap:
-            preamble_lines.append(f"Image {i} caption: {cap}")
+            preamble_lines.append(f"{label} caption: {cap}")
         else:
-            preamble_lines.append(f"Image {i}: (no caption)")
+            preamble_lines.append(f"{label}: (no caption)")
     content_parts.append({"type": "text", "text": "\n".join(preamble_lines)})
 
     total_bytes = 0
     for idx, it in enumerate(items, start=1):
         file_id = it["file_id"]
+        is_pdf = it.get("kind") == "pdf"
         mime = it.get("mime_type") or "image/jpeg"
+        label = _attachment_label(it, idx)
+        max_bytes = config.MAX_PDF_BYTES if is_pdf else config.MAX_IMAGE_BYTES
         try:
             raw = await _download_telegram_file(
                 ctx.bot,
                 file_id,
-                max_bytes=config.MAX_IMAGE_BYTES,
+                max_bytes=max_bytes,
             )
         except ValueError as e:
-            log.warning("Image %s rejected: %s", idx, e)
+            log.warning("%s rejected: %s", label, e)
             await update.message.reply_text(
-                f"Image {idx} is too large or invalid: {e} "
-                f"(max {config.MAX_IMAGE_BYTES // (1024 * 1024)} MB per file)."
+                f"{label} is too large or invalid: {e} "
+                f"(max {max_bytes // (1024 * 1024)} MB per file)."
             )
             return
         except TelegramError:
-            log.exception("Telegram file download failed for image %s", idx)
+            log.exception("Telegram file download failed for %s", label)
             await update.message.reply_text(
-                f"Could not download image {idx} from Telegram. Try again."
+                f"Could not download {label} from Telegram. Try again."
             )
             return
         except Exception:
-            log.exception("Unexpected error downloading image %s", idx)
+            log.exception("Unexpected error downloading %s", label)
             await update.message.reply_text(
-                f"Could not download image {idx}. Try again."
+                f"Could not download {label}. Try again."
             )
             return
         total_bytes += len(raw)
         if total_bytes > config.MAX_VISION_PAYLOAD_BYTES:
             await update.message.reply_text(
-                "Combined image size is too large for one request. "
-                "Send fewer or smaller images."
+                "Combined attachment size is too large for one request. "
+                "Send fewer or smaller files."
             )
             return
-        content_parts.append(_openrouter_image_part(raw, mime))
+        if is_pdf:
+            content_parts.append(
+                _openrouter_pdf_part(raw, it.get("file_name") or "document.pdf")
+            )
+        else:
+            content_parts.append(_openrouter_image_part(raw, mime))
 
     await _conversation_reply(
         update,
         ctx,
         user_content=content_parts,
         memory_user_text=memory_user_text,
-        stream=False,
+        stream=True,
         web_search=False,
         allow_fallback=False,
         model=config.VISION_MODEL,
@@ -1060,7 +1110,16 @@ def _media_item_from_message(message) -> dict | None:
             "mime_type": "image/jpeg",
         }
     if message.document and message.document.mime_type:
-        if not str(message.document.mime_type).startswith("image/"):
+        mime = str(message.document.mime_type)
+        if mime == "application/pdf":
+            return {
+                "kind": "pdf",
+                "file_id": message.document.file_id,
+                "caption": message.caption,
+                "mime_type": mime,
+                "file_name": message.document.file_name or "document.pdf",
+            }
+        if not mime.startswith("image/"):
             return None
         return {
             "kind": "document",
@@ -1087,7 +1146,7 @@ async def handle_media(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
     mg_id = message.media_group_id
     if mg_id is None:
-        await _handle_image_bundle(ctx, update, [item])
+        await _handle_media_bundle(ctx, update, [item])
         return
 
     key = f"{chat.id}:{mg_id}"
@@ -1182,6 +1241,19 @@ async def _send_draft(
         return False
 
 
+def _reasoning_draft_text(reasoning: str) -> str:
+    """Thinking header plus the tail of the reasoning streamed so far."""
+    # OpenAI summaries arrive as "**Heading**\n\ntext" sections with no gap between them.
+    text = re.sub(r"\*\*([^*\n]+)\*\*(?=\n)", r"\n\n\1", reasoning).strip()
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    if not text:
+        return THINKING_DRAFT
+    budget = MAX_TG_LEN - len(THINKING_DRAFT) - 3
+    if len(text) > budget:
+        text = "…" + text[-(budget - 1):]
+    return f"{THINKING_DRAFT}\n\n{text}"
+
+
 async def _send_reply(update: Update, text: str) -> None:
     """Send text back, handling length limits and HTML parse failures."""
     chunks = [text[i : i + MAX_TG_LEN] for i in range(0, len(text), MAX_TG_LEN)]
@@ -1260,7 +1332,8 @@ def main() -> None:
     app.add_handler(CommandHandler("openrouter_balance", cmd_openrouter_balance))
     app.add_handler(
         MessageHandler(
-            (filters.PHOTO | filters.Document.IMAGE) & ~filters.COMMAND,
+            (filters.PHOTO | filters.Document.IMAGE | filters.Document.PDF)
+            & ~filters.COMMAND,
             handle_media,
         )
     )

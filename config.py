@@ -25,14 +25,21 @@ OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_CREDITS_URL = "https://openrouter.ai/api/v1/credits"
 OPENROUTER_KEY_INFO_URL = "https://openrouter.ai/api/v1/key"
 
-# Cap per response (reasoning tokens count toward it). Normal replies are a few
-# hundred tokens; this stops a degenerate stream from running for minutes.
-MAX_OUTPUT_TOKENS = int(os.environ.get("MAX_OUTPUT_TOKENS", "4000"))
+# Cap per response (reasoning tokens count toward it). xhigh reasoning on
+# GPT-6.1 Sol used ~6k reasoning tokens on a hard planning question, so leave
+# room for that; this only stops a degenerate stream from running for minutes.
+MAX_OUTPUT_TOKENS = int(os.environ.get("MAX_OUTPUT_TOKENS", "32000"))
 # OpenRouter providers to never route to (Modal served garbage output on 2026-09-29).
 OPENROUTER_IGNORE_PROVIDERS = ["modal"]
 
-DEFAULT_MODEL = "openai/gpt-6-luna"
-# GPT-6 Luna accepts text + image input, so photo turns stay on the chat model.
+DEFAULT_MODEL = "openai/gpt-6.1-sol"
+# Reasoning effort sent for OpenAI GPT-6 models (low|medium|high|xhigh|max).
+OPENAI_REASONING_EFFORT = (
+    os.environ.get("OPENAI_REASONING_EFFORT", "xhigh").strip().lower() or "xhigh"
+)
+# Optional OpenAI answer length (low|medium|high); unset keeps the provider default (medium).
+OPENAI_VERBOSITY = os.environ.get("OPENAI_VERBOSITY", "").strip().lower() or None
+# GPT-6.1 Sol accepts text, image and PDF input, so attachment turns stay on the chat model.
 VISION_MODEL = DEFAULT_MODEL
 EXTRACTION_MODEL = "google/gemini-3.1-flash-lite-preview"
 CHEAP_MODEL = "google/gemini-3.1-flash-lite-preview"
@@ -44,6 +51,7 @@ MEMORY_WRITER_MODE = (
 
 # On 429 rate limit, retry once with this model instead
 RATE_LIMIT_FALLBACK: dict[str, str] = {
+    "openai/gpt-6.1-sol": "google/gemini-3.8-flash",
     "openai/gpt-6-luna": "google/gemini-3.8-flash",
     "z-ai/glm-5.3-flash": "google/gemini-3.8-flash",
     "z-ai/glm-5.2": "google/gemini-3.8-flash",
@@ -80,6 +88,8 @@ def format_local_time(dt: datetime | None = None, *, with_label: bool = True) ->
 # Vision / Telegram media (per user turn)
 MAX_VISION_IMAGES = int(os.environ.get("MAX_VISION_IMAGES", "10"))
 MAX_IMAGE_BYTES = int(os.environ.get("MAX_IMAGE_BYTES", str(5 * 1024 * 1024)))
+# Telegram bots can download at most 20 MB per file.
+MAX_PDF_BYTES = int(os.environ.get("MAX_PDF_BYTES", str(20 * 1024 * 1024)))
 MAX_VISION_PAYLOAD_BYTES = int(
     os.environ.get("MAX_VISION_PAYLOAD_BYTES", str(20 * 1024 * 1024))
 )

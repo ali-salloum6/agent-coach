@@ -42,6 +42,8 @@ def _assistant_content_to_text(content: object) -> str:
 
 
 def _reasoning_for_model(model: str) -> dict | None:
+    if model.startswith("openai/gpt-6"):
+        return {"effort": config.OPENAI_REASONING_EFFORT}
     if model.startswith("z-ai/glm-"):
         return {"effort": "max"}
     if model.startswith("google/"):
@@ -60,6 +62,8 @@ def _build_request_body(messages: list[dict], model: str, web_search: bool) -> d
         body["plugins"] = [{"id": "web"}]
     if reasoning := _reasoning_for_model(model):
         body["reasoning"] = reasoning
+    if config.OPENAI_VERBOSITY and model.startswith("openai/"):
+        body["verbosity"] = config.OPENAI_VERBOSITY
     return body
 
 
@@ -232,8 +236,10 @@ async def _chat_stream_attempt(
     messages: list[dict],
     model: str,
     web_search: bool,
-) -> AsyncIterator[str]:
-    """Single attempt at streaming; may raise httpx.HTTPStatusError on 429."""
+) -> AsyncIterator[tuple[str, str]]:
+    """Single attempt at streaming; may raise httpx.HTTPStatusError on 429.
+    Yields ("reasoning", text) and ("content", text) deltas.
+    """
     body = _build_request_body(messages, model, web_search)
     body["stream"] = True
     headers = _request_headers()
@@ -280,11 +286,16 @@ async def _chat_stream_attempt(
                 if not choices:
                     continue
                 delta = choices[0].get("delta") or {}
+                # OpenRouter puts readable reasoning (OpenAI sends summaries) in
+                # `reasoning`; `reasoning_details` repeats it plus encrypted parts.
+                reasoning = delta.get("reasoning")
+                if reasoning and isinstance(reasoning, str):
+                    yield ("reasoning", reasoning)
                 content = delta.get("content")
                 if not content:
                     continue
                 if isinstance(content, str):
-                    yield content
+                    yield ("content", content)
                 elif isinstance(content, list):
                     for block in content:
                         if not isinstance(block, dict):
@@ -293,7 +304,7 @@ async def _chat_stream_attempt(
                             continue
                         text = block.get("text")
                         if text:
-                            yield text
+                            yield ("content", text)
 
 
 async def chat_stream(
@@ -302,8 +313,9 @@ async def chat_stream(
     web_search: bool = False,
     response_meta: dict | None = None,
     allow_fallback: bool = True,
-) -> AsyncIterator[str]:
-    """Stream text deltas from OpenRouter chat completions SSE endpoint.
+) -> AsyncIterator[tuple[str, str]]:
+    """Stream (kind, text) deltas from OpenRouter chat completions SSE endpoint,
+    where kind is "reasoning" or "content".
     On 429 rate limit, retries once with the configured fallback model.
     If response_meta is provided and fallback was used, sets
     response_meta["fallback_used"] = (original_model, fallback_model).
