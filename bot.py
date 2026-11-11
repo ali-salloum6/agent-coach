@@ -204,6 +204,11 @@ THINKING_DRAFT = "💭 Thinking…"
 # Warn when the conversation (excluding the system prompt) crosses these sizes;
 # long histories make the model mix up stale questions with the current one.
 HISTORY_WARN_THRESHOLDS = (15, 20, 25, 30)
+
+# Memory writes still running after a reply. /new and /start wait for them so
+# the fresh conversation's memory snapshot includes the last exchange.
+_memory_tasks: set[asyncio.Task] = set()
+MEMORY_WRITE_WAIT_SECONDS = 90.0
 _draft_id_counter = itertools.count(start=int(time.time()))
 
 _album_lock = asyncio.Lock()
@@ -253,6 +258,23 @@ def _reset_session(model: str | None = None) -> None:
     _persist_session()
 
 
+async def _wait_for_memory_writes(update: Update) -> None:
+    """Let in-flight memory writes finish before memory is snapshotted again."""
+    pending = [t for t in _memory_tasks if not t.done()]
+    if not pending:
+        return
+    log.info("Waiting for %d memory write(s) before starting fresh", len(pending))
+    try:
+        await update.message.chat.send_action("typing")
+    except TelegramError:
+        pass
+    _, still_running = await asyncio.wait(pending, timeout=MEMORY_WRITE_WAIT_SECONDS)
+    if still_running:
+        log.warning(
+            "Starting fresh with %d memory write(s) still running", len(still_running)
+        )
+
+
 def _load_session_or_reset() -> None:
     """Restore the last conversation from disk, or start fresh with memory."""
     loaded = session_store.load(AGENT.slug)
@@ -275,6 +297,7 @@ def _load_session_or_reset() -> None:
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_allowed_user(update):
         return
+    await _wait_for_memory_writes(update)
     _reset_session()
     name = html.escape(AGENT.name)
     model = html.escape(session["model"])
@@ -313,6 +336,7 @@ async def cmd_new(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     else:
         model = raw
         search_on = False
+    await _wait_for_memory_writes(update)
     _reset_session(model)
     if search_on:
         session["web_search"] = True
@@ -940,7 +964,9 @@ async def _conversation_reply(
             parse_mode="HTML",
         )
 
-    asyncio.create_task(_background_extract(memory_user_text, reply, chat_model))
+    memory_task = asyncio.create_task(_background_extract(memory_user_text, reply, chat_model))
+    _memory_tasks.add(memory_task)
+    memory_task.add_done_callback(_memory_tasks.discard)
 
     if config.TTS_ENABLED and session["tts"]:
         asyncio.create_task(_background_tts(update, reply))
