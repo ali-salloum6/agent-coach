@@ -41,14 +41,20 @@ def _assistant_content_to_text(content: object) -> str:
     return str(content)
 
 
-def _reasoning_for_model(model: str) -> dict | None:
+def reasoning_effort(model: str) -> str | None:
+    """Reasoning effort sent for this model, or None to use the provider default."""
     if model.startswith("openai/gpt-6"):
-        return {"effort": config.OPENAI_REASONING_EFFORT}
+        return config.OPENAI_REASONING_EFFORT
     if model.startswith("z-ai/glm-"):
-        return {"effort": "max"}
+        return "max"
     if model.startswith("google/"):
-        return {"effort": "medium"}
+        return "medium"
     return None
+
+
+def _reasoning_for_model(model: str) -> dict | None:
+    effort = reasoning_effort(model)
+    return {"effort": effort} if effort else None
 
 
 def _build_request_body(messages: list[dict], model: str, web_search: bool) -> dict:

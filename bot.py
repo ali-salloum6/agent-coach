@@ -318,7 +318,12 @@ async def cmd_new(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         session["web_search"] = True
         _persist_session()
     model_esc = html.escape(session["model"])
-    msg = f"Fresh conversation started.\nModel: <code>{model_esc}</code>"
+    effort = llm.reasoning_effort(session["model"]) or "provider default"
+    msg = (
+        "Fresh conversation started.\n"
+        f"Model: <code>{model_esc}</code>\n"
+        f"Reasoning effort: <code>{html.escape(effort)}</code>"
+    )
     if session["web_search"]:
         msg += "\nWeb search <b>on</b>."
     await update.message.reply_text(msg, parse_mode="HTML")

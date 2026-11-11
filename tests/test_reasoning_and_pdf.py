@@ -141,6 +141,31 @@ class ConversationDraftTests(unittest.IsolatedAsyncioTestCase):
         message.reply_text.assert_awaited()
 
 
+class NewConversationMessageTests(unittest.IsolatedAsyncioTestCase):
+    async def _reply_for(self, model: str) -> str:
+        message = SimpleNamespace(reply_text=AsyncMock())
+        update = SimpleNamespace(message=message)
+        ctx = SimpleNamespace(args=[model])
+
+        def fake_reset(m: str | None = None) -> None:
+            bot.session["model"] = m
+
+        with patch.dict(bot.session, {"web_search": False}), \
+                patch.object(bot, "_is_allowed_user", return_value=True), \
+                patch.object(bot, "_reset_session", fake_reset), \
+                patch.object(config, "OPENAI_REASONING_EFFORT", "xhigh"):
+            await bot.cmd_new(update, ctx)
+        return message.reply_text.await_args.args[0]
+
+    async def test_shows_configured_effort(self) -> None:
+        text = await self._reply_for("openai/gpt-6.1-sol")
+        self.assertIn("Reasoning effort: <code>xhigh</code>", text)
+
+    async def test_shows_provider_default_when_no_effort_is_sent(self) -> None:
+        text = await self._reply_for("anthropic/claude-opus-5.5")
+        self.assertIn("Reasoning effort: <code>provider default</code>", text)
+
+
 class PdfAttachmentTests(unittest.TestCase):
     def _message(self, mime: str, name: str | None = "labs.pdf") -> SimpleNamespace:
         return SimpleNamespace(
