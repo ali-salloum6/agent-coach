@@ -23,7 +23,7 @@ import json
 import logging
 import os
 import re
-from datetime import date as date_cls, timedelta
+from datetime import date as date_cls, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -241,14 +241,20 @@ def condense_story(agent_slug: str, story: str, *, today: str, limit: int, phase
     1. fold a calendar month (by each week's first day) once all its weeks
        are older than the latest KEEP_WEEK_LINES;
     2. merge the two oldest folded lines, so older history gets coarser;
-    3. fold the oldest remaining old week into the folded line before it.
+    3. fold the oldest remaining old week into the folded line before it;
+    4. move the oldest closed chapter in full to the archive, leaving its
+       summary (see `archive_oldest_chapter`).
     Protected weeks never fold. Every new line is recomputed from the logs.
     """
     while len(story) > limit:
         lines = story.rstrip().splitlines()
         bounds = _open_chapter(lines)
         if bounds is None:
-            break
+            archived = archive_oldest_chapter(agent_slug, story, today=today)
+            if archived is None:
+                break
+            story = archived
+            continue
         start, end = bounds
         singles = [i for i in range(start, end) if _WEEK_RE.match(lines[i])]
         recent = set(singles[-KEEP_WEEK_LINES:])
@@ -269,7 +275,11 @@ def condense_story(agent_slug: str, story: str, *, today: str, limit: int, phase
             before = [i for i in folded if i < eligible[0]]
             group = [before[-1], eligible[0]] if before else [eligible[0]]
         else:
-            break
+            archived = archive_oldest_chapter(agent_slug, story, today=today)
+            if archived is None:
+                break
+            story = archived
+            continue
         first, last = _span(lines[group[0]])[0], _span(lines[group[-1]])[1]
         new_line = folded_line(agent_slug, first, last, phase_start, today=today)
         for i in reversed(group):
@@ -280,6 +290,84 @@ def condense_story(agent_slug: str, story: str, *, today: str, limit: int, phase
             break
         story = new_story
     return story
+
+
+def fold_all_weeks(agent_slug: str, story: str, *, phase_start: str, protect_through: int, today: str) -> str:
+    """Fold every unprotected week line of the open chapter, a calendar month at a time.
+
+    Used when a chapter closes: its weeks no longer need weekly detail.
+    """
+    lines = story.rstrip().splitlines()
+    bounds = _open_chapter(lines)
+    if bounds is None:
+        return story
+    start, end = bounds
+    singles = [i for i in range(start, end) if _WEEK_RE.match(lines[i]) and _span(lines[i])[0] > protect_through]
+
+    def month_of(i: int) -> tuple[int, int]:
+        first = date_cls.fromisoformat(week_dates(_span(lines[i])[0], phase_start)[0])
+        return first.year, first.month
+
+    groups: list[list[int]] = []
+    for i in singles:
+        if groups and month_of(groups[-1][0]) == month_of(i):
+            groups[-1].append(i)
+        else:
+            groups.append([i])
+    for group in reversed(groups):
+        first, last = _span(lines[group[0]])[0], _span(lines[group[-1]])[1]
+        new_line = folded_line(agent_slug, first, last, phase_start, today=today)
+        for i in reversed(group):
+            del lines[i]
+        lines.insert(group[0], new_line)
+    return "\n".join(lines) + "\n"
+
+
+ARCHIVED_NOTE = "- The full chapter is in the archive."
+_MONTHS = r"(?:January|February|March|April|May|June|July|August|September|October|November|December)"
+
+
+def _chapter_range(heading: str) -> tuple[str, str] | None:
+    """Dates from a closed chapter heading such as "14 March to 28 September 2026"."""
+    m = re.search(rf"(\d{{1,2}}) ({_MONTHS})(?: (\d{{4}}))? to (\d{{1,2}}) ({_MONTHS}) (\d{{4}})", heading)
+    if not m:
+        return None
+    end = datetime.strptime(f"{m.group(4)} {m.group(5)} {m.group(6)}", "%d %B %Y").date()
+    year = int(m.group(3)) if m.group(3) else end.year
+    start = datetime.strptime(f"{m.group(1)} {m.group(2)} {year}", "%d %B %Y").date()
+    if start > end:
+        start = start.replace(year=start.year - 1)
+    return start.isoformat(), end.isoformat()
+
+
+def archive_oldest_chapter(agent_slug: str, story: str, *, today: str) -> str | None:
+    """Move the oldest closed chapter in full to the archive, keeping its summary.
+
+    Returns the shorter story, or None when every closed chapter is already
+    archived. The archive copy is written once per chapter heading.
+    """
+    lines = story.rstrip().splitlines()
+    for i, line in enumerate(lines):
+        if not (line.startswith("## ") and "(closed)" in line):
+            continue
+        end = next((j for j in range(i + 1, len(lines)) if lines[j].startswith("## ")), len(lines))
+        body = lines[i + 1:end]
+        if ARCHIVED_NOTE in body:
+            continue
+        path = ledger.agent_dir(agent_slug) / "archive" / "story_chapters.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        existing = path.read_text(encoding="utf-8") if path.exists() else ""
+        if line not in existing:
+            with path.open("a", encoding="utf-8") as f:
+                f.write(f"\n<!-- archived {today} -->\n" + "\n".join(lines[i:end]).strip() + "\n")
+        summary = next((b for b in body if b.startswith("- Summary")), None)
+        if summary is None:
+            span = _chapter_range(line)
+            summary = (f"- Summary: " + "; ".join(period_parts(agent_slug, span[0], span[1], today=today, compact=True)) + "."
+                       if span else "- Summary: see the archive.")
+        new_body = ["", summary, ARCHIVED_NOTE, ""] if end < len(lines) else ["", summary, ARCHIVED_NOTE]
+        return "\n".join(lines[: i + 1] + new_body + lines[end:]).rstrip() + "\n"
+    return None
 
 
 # ---------------------------------------------------------------------------

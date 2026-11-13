@@ -174,7 +174,12 @@ def live_context(agent_slug: str, message_text: str, *, now: datetime | None = N
     ]
     week = phase_week(phase, today)
     if phase and week:
-        blocks.append(f"Phase: {phase['name']}, week {week} (since {brief.fmt_day(phase['start'], today=today)}).")
+        line = f"Phase: {phase['name']}, week {week} (since {brief.fmt_day(phase['start'], today=today)})."
+        if phase.get("next"):
+            nxt = phase["next"]
+            line += (f" Next phase: {nxt['name']} from {brief.fmt_day(nxt['start'], today=today)}, "
+                     f"agreed {brief.fmt_day(nxt['agreed'], today=today)}.")
+        blocks.append(line)
     blocks.append(brief.numbers(agent_slug, today=today, phase_start=(phase or {}).get("start")))
     tripwires = cards.tripwire_lines(agent_slug, today=today)
     if tripwires:

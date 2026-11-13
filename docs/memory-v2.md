@@ -113,6 +113,31 @@ the coach knows it was sent.
 Card limits: profile 5,000 characters, threads 4,000, playbook 7,000, story
 12,000. Condensing the profile, threads or playbook is still manual.
 
+## Changing phase
+
+A new phase (a cut, a build, maintenance, a diet break) is the user's
+decision, saved by the `change_phase` operation from the user's own words. It
+starts today or on a date up to 30 days ahead; a future start is kept in
+`phase.json` as `next`, shown in the live block, and applied on that day
+(`phases.apply_due`, called before each reply and each weekly review).
+
+Starting a phase (`phases.py`):
+
+- closes the open story chapter: the heading gets its date range, the "So
+  far" line becomes a "Summary" line computed from the logs, and unprotected
+  week lines fold into month lines;
+- opens the next chapter with the starting readings from the logs and the
+  agreed plan;
+- rewrites the playbook's Phase section and leaves a 14-day note asking the
+  coach to agree new targets and pivot rules with the user; those changes go
+  through the usual playbook and tripwire operations;
+- records the old phase in `phase.json` `history` and restarts the weekly
+  review's week count.
+
+When the story is still over its limit after folding the open chapter, the
+oldest closed chapter moves in full to `archive/story_chapters.md` (where
+archive search finds it) and keeps only its summary in the card.
+
 ## Switching a bot
 
 1. Freeze the server's old memory files and convert anything added since the
@@ -174,9 +199,10 @@ Card limits: profile 5,000 characters, threads 4,000, playbook 7,000, story
   memory files stay on the server untouched, with a backup in
   `data/archive/switch-<date>/`; removing `MEMORY_VERSION=2` from `.env.gym`
   and restarting goes back to them. The life coach stays on memory v1.
-- Not built yet: changing phase (closing a chapter and opening the next,
-  likely needed for the January review), and automatic condensing of the
-  profile, threads and playbook cards.
+- Phase changes built on 2026-11-13 (see "Changing phase"), tested with the
+  real model on a copy of the data.
+- Not built yet: automatic condensing of the profile, threads and playbook
+  cards; the check-in warns at 90% full.
 
 Provider note (2026-11-13): at peak load GPT-6.1 Sol rejects prompts above
 a size that changes with demand ("high demand ... exceeds the maximum usage

@@ -29,6 +29,7 @@ import ledger
 import llm
 import memory
 import memory_v2
+import phases
 import review
 import session_store
 import tts
@@ -1308,6 +1309,7 @@ def _request_messages(update: Update, memory_user_text: str) -> list[dict]:
     try:
         if update.effective_chat:
             memory_v2.remember_chat(AGENT.slug, update.effective_chat.id)
+        phases.apply_due(AGENT.slug, today=ledger.today_iso())
         live = memory_v2.live_context(AGENT.slug, memory_user_text)
         return memory_v2.with_live_context(session["history"], live)
     except Exception:
@@ -1317,6 +1319,7 @@ def _request_messages(update: Update, memory_user_text: str) -> list[dict]:
 
 async def _send_checkin(bot, chat_id: int) -> None:
     """Run the weekly review and send its check-in to the user."""
+    phases.apply_due(AGENT.slug, today=ledger.today_iso())
     result = review.run(AGENT.slug, today=ledger.today_iso())
     text = result["text"]
     try:

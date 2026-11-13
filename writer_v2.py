@@ -38,6 +38,7 @@ import memory_ops
 import memory_template
 import memory_v2
 import numcheck
+import phases
 import recall
 from agents.registry import get_agent
 
@@ -69,14 +70,16 @@ LIFT_UNITS = frozenset({"kg", "lb"})
 # own words can make them.
 USER_ONLY = frozenset(
     {"set_profile", "set_thread", "close_thread", "remove_food", "apply_change",
-     "change_playbook", "set_tripwire", "remove_tripwire"}
+     "change_playbook", "set_tripwire", "remove_tripwire", "change_phase"}
 )
+MAX_PHASE_AHEAD_DAYS = 30
 # A quote this short ("I", "ok") proves nothing unless it is the whole message.
 MIN_EVIDENCE_CHARS = 12
 KNOWN_OPS = frozenset(
     {"log_food", "correct_food", "remove_food", "day_total", "log_metric", "log_lift",
      "set_profile", "set_thread", "close_thread", "event", "food_reference", "note",
-     "propose_change", "apply_change", "change_playbook", "set_tripwire", "remove_tripwire"}
+     "propose_change", "apply_change", "change_playbook", "set_tripwire", "remove_tripwire",
+     "change_phase"}
 )
 
 
@@ -585,6 +588,27 @@ def apply_op(slug: str, op: dict, exchange: Exchange, *, now: datetime) -> str:
         _write_tripwires(slug, wires)
         return f"tripwire {wire['id']}"
 
+    if name == "change_phase":
+        phase_name = _text(op, "name", limit=30).lower()
+        if not re.fullmatch(r"[a-z][a-z \-]{1,29}", phase_name):
+            raise Rejected("name must be a short phase name such as cut, build or maintenance")
+        try:
+            start = date_cls.fromisoformat(op.get("start") or today)
+        except (TypeError, ValueError):
+            raise Rejected(f"start must be YYYY-MM-DD, got {op.get('start')!r}") from None
+        day = date_cls.fromisoformat(today)
+        if start < day - timedelta(days=BACKDATE_DAYS) or start > day + timedelta(days=MAX_PHASE_AHEAD_DAYS):
+            raise Rejected(f"start must be within {BACKDATE_DAYS} days before and {MAX_PHASE_AHEAD_DAYS} days after today")
+        current = memory_v2.read_phase(slug) or {}
+        if current.get("start") and start.isoformat() <= current["start"]:
+            raise Rejected(f"the new phase must start after the current one ({current['start']})")
+        plan = _text(op, "plan", required=False, limit=300)
+        pending_text = memory_v2.pending_lines(memory_v2.read_pending(slug))
+        _require_numbers(numbers_in(plan), f"{exchange.both}\n{pending_text}")
+        if start.isoformat() <= today:
+            return phases.start_phase(slug, name=phase_name, start=start.isoformat(), plan=plan, today=today)
+        return phases.schedule_phase(slug, name=phase_name, start=start.isoformat(), plan=plan, today=today)
+
     if name == "remove_tripwire":
         wire_id = _text(op, "id", limit=40)
         wires = cards.read_tripwires(slug)
@@ -662,6 +686,16 @@ def _lift_lines(slug: str, today: str) -> str:
     return "\n".join(lines) or "(nothing logged today or yesterday)"
 
 
+def _phase_text(slug: str) -> str:
+    phase = memory_v2.read_phase(slug)
+    if not phase:
+        return "(none)"
+    text = f"{phase.get('name')} since {phase.get('start')}"
+    if phase.get("next"):
+        text += f"; next: {phase['next']['name']} from {phase['next']['start']} (already agreed)"
+    return text
+
+
 def build_prompt(slug: str, exchange: Exchange, *, now: datetime) -> str:
     today = ledger.today_iso(now)
     profile = cards.read_card(slug, cards.PROFILE)
@@ -708,6 +742,8 @@ The playbook (targets, weekly protocol, pivot rules, checkpoints):
   {{"op": "change_playbook", "section", "old": an existing line or null, "new": the new line or null, "source": "user", "evidence"}}: the user decided a change themselves.
   {{"op": "set_tripwire", "id", "name", "metric", "kind": "rate" | "level", "op_symbol": ">" | ">=" | "<" | "<=", "threshold", "unit", "window_weeks" (rate) or "consecutive" (level), "then", "source": "user", "evidence"}}: when the user agrees to a new or changed pivot rule, send this too so code can check it.
   {{"op": "remove_tripwire", "id", "source": "user", "evidence"}}
+Phases:
+  {{"op": "change_phase", "name": "cut" | "build" | "maintenance" | "diet break" | another short name, "start": "YYYY-MM-DD", "plan": one line with the agreed targets or null, "source": "user", "evidence"}}: the user decided to start a new phase, today or on a date up to 30 days ahead. Send the playbook changes and pivot rules the user agreed to for it as separate ops.
 
 === Food log, today and yesterday ===
 {_food_lines(slug, today)}
@@ -723,6 +759,9 @@ The playbook (targets, weekly protocol, pivot rules, checkpoints):
 
 === Playbook ===
 {playbook.strip() or '(empty)'}
+
+=== Phase ===
+{_phase_text(slug)}
 
 === Waiting proposals ===
 {pending}
