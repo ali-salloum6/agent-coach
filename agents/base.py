@@ -20,14 +20,18 @@ class AgentConfig:
     default_model: str = config.DEFAULT_MODEL
     extraction_model: str = config.EXTRACTION_MODEL
     memory_writer_context: str = "a long-term Telegram coach"
+    # Prompt for memory v2 (cards plus a live data block); None means the
+    # agent has no v2 prompt and keeps the v1 one.
+    system_prompt_template_v2: str | None = None
 
-    def build_system_prompt(self, memory: str) -> str:
+    def build_system_prompt(self, memory: str, *, v2: bool = False) -> str:
         memory_section = memory.strip() if memory.strip() else "(nothing yet)"
         now = config.local_now()
         current_datetime = (
             f"{now.strftime('%Y-%m-%d, %A, %H:%M')} {config.MEMORY_TIMEZONE_LABEL}"
         )
-        prompt = self.system_prompt_template.replace("{memory}", memory_section).replace(
+        template = (self.system_prompt_template_v2 if v2 else None) or self.system_prompt_template
+        prompt = template.replace("{memory}", memory_section).replace(
             "{current_datetime}", current_datetime
         )
         if config.TTS_ENABLED:

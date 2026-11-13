@@ -48,13 +48,26 @@ CHEAP_MODEL = "google/gemini-3.1-flash-lite-preview"
 MEMORY_WRITER_MODE = (
     os.environ.get("MEMORY_WRITER_MODE", "structured").strip().lower() or "structured"
 )
+# Reasoning effort for the background memory step (memory v2), lower than the
+# reply's so the next reply does not wait long for it. Only models that take
+# an effort setting use it.
+MEMORY_WRITER_EFFORT = os.environ.get("MEMORY_WRITER_EFFORT", "low").strip().lower() or "low"
+# Which memory the bot uses. "1" is the single Markdown file per agent;
+# "2" is logs, cards, story and archive (docs/memory-v2.md). Set per bot in
+# its env file, so each agent can switch on its own.
+MEMORY_VERSION = os.environ.get("MEMORY_VERSION", "1").strip() or "1"
+# Weekly review (memory v2 only): local weekday and time it runs.
+WEEKLY_REVIEW_DAY = os.environ.get("WEEKLY_REVIEW_DAY", "monday").strip().lower() or "monday"
+WEEKLY_REVIEW_TIME = os.environ.get("WEEKLY_REVIEW_TIME", "12:00").strip() or "12:00"
 
-# On 429 rate limit, retry once with this model instead
+# On a 429 rate limit, or a provider at capacity, retry once with this model.
+# Every fallback must be allowed by the OpenRouter account's zero-data-retention
+# setting; Gemini 3.8 Flash is not (checked 2026-11-13), so it is only a source.
 RATE_LIMIT_FALLBACK: dict[str, str] = {
-    "openai/gpt-6.1-sol": "google/gemini-3.8-flash",
-    "openai/gpt-6-luna": "google/gemini-3.8-flash",
-    "z-ai/glm-5.3-flash": "google/gemini-3.8-flash",
-    "z-ai/glm-5.2": "google/gemini-3.8-flash",
+    "openai/gpt-6.1-sol": "moonshotai/kimi-k3.1-pro",
+    "openai/gpt-6-luna": "moonshotai/kimi-k3.1-pro",
+    "z-ai/glm-5.3-flash": "z-ai/glm-5",
+    "z-ai/glm-5.2": "z-ai/glm-5",
     "google/gemini-3.8-flash": "z-ai/glm-5",
     "google/gemini-3.1-pro-preview": "z-ai/glm-5",
     "google/gemini-3-flash-preview": "z-ai/glm-5",

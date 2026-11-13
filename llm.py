@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections.abc import AsyncIterator
 
 import httpx
@@ -57,7 +58,9 @@ def _reasoning_for_model(model: str) -> dict | None:
     return {"effort": effort} if effort else None
 
 
-def _build_request_body(messages: list[dict], model: str, web_search: bool) -> dict:
+def _build_request_body(
+    messages: list[dict], model: str, web_search: bool, effort: str | None = None
+) -> dict:
     body: dict = {
         "model": model,
         "messages": messages,
@@ -67,7 +70,9 @@ def _build_request_body(messages: list[dict], model: str, web_search: bool) -> d
     if web_search:
         body["plugins"] = [{"id": "web"}]
     if reasoning := _reasoning_for_model(model):
-        body["reasoning"] = reasoning
+        # `effort` lowers the configured effort for background calls (the
+        # memory step) on models that take one; it never adds reasoning.
+        body["reasoning"] = {"effort": effort} if effort else reasoning
     if config.OPENAI_VERBOSITY and model.startswith("openai/"):
         body["verbosity"] = config.OPENAI_VERBOSITY
     return body
@@ -87,6 +92,16 @@ def _fallback_for_429(model: str, *, allow_fallback: bool) -> str | None:
     return config.RATE_LIMIT_FALLBACK.get(model)
 
 
+# Providers under load sometimes answer with HTTP 200 and an error payload
+# instead of a 429 (GPT-6.1 Sol: "high demand ... exceeds the maximum usage
+# size allowed during peak load"). These get the same one-time fallback.
+_CAPACITY_ERROR_RE = re.compile(r"high demand|maximum usage size|overloaded|over capacity", re.I)
+
+
+def is_capacity_error(message: str) -> bool:
+    return bool(_CAPACITY_ERROR_RE.search(message or ""))
+
+
 async def chat(
     messages: list[dict],
     model: str = config.DEFAULT_MODEL,
@@ -94,6 +109,7 @@ async def chat(
     response_meta: dict | None = None,
     allow_fallback: bool = True,
     timeout_seconds: float = 120.0,
+    reasoning_effort_override: str | None = None,
 ) -> str:
     """Send messages to OpenRouter and return the assistant's reply text.
     If response_meta is provided and a 429 fallback was used, sets
@@ -105,10 +121,11 @@ async def chat(
     headers = _request_headers()
     current_model = model
     requested_model = model
+    fell_back = False
 
     async with _httpx_client(timeout_seconds) as client:
         while True:
-            body = _build_request_body(messages, current_model, web_search)
+            body = _build_request_body(messages, current_model, web_search, reasoning_effort_override)
             resp = await client.post(config.OPENROUTER_BASE_URL, json=body, headers=headers)
             if resp.is_error:
                 log.error(
@@ -119,6 +136,7 @@ async def chat(
                 )
                 if (
                     resp.status_code == 429
+                    and not fell_back
                     and (fallback := _fallback_for_429(current_model, allow_fallback=allow_fallback))
                 ):
                     log.warning(
@@ -129,6 +147,7 @@ async def chat(
                     if response_meta is not None:
                         response_meta["fallback_used"] = (requested_model, fallback)
                     current_model = fallback
+                    fell_back = True
                     continue
                 resp.raise_for_status()
             data = resp.json()
@@ -157,6 +176,19 @@ async def chat(
                             current_model,
                             msg,
                         )
+                        if is_capacity_error(msg) and not fell_back and (
+                            fallback := _fallback_for_429(current_model, allow_fallback=allow_fallback)
+                        ):
+                            log.warning(
+                                "Provider at capacity on %s, retrying with %s",
+                                current_model,
+                                fallback,
+                            )
+                            if response_meta is not None:
+                                response_meta["fallback_used"] = (requested_model, fallback)
+                            current_model = fallback
+                            fell_back = True
+                            continue
                         raise RuntimeError(f"OpenRouter error: {msg}") from e
                     log.error(
                         "OpenRouter response missing choices for model=%s. keys=%s body_preview=%s",
@@ -331,12 +363,32 @@ async def chat_stream(
     fallback_used = False
 
     while True:
+        yielded = False
         try:
             async for delta in _chat_stream_attempt(
                 messages, current_model, web_search
             ):
+                yielded = True
                 yield delta
             return
+        except RuntimeError as e:
+            if (
+                not yielded
+                and not fallback_used
+                and is_capacity_error(str(e))
+                and (fallback := _fallback_for_429(current_model, allow_fallback=allow_fallback))
+            ):
+                log.warning(
+                    "Provider at capacity on %s, retrying stream with %s",
+                    current_model,
+                    fallback,
+                )
+                if response_meta is not None:
+                    response_meta["fallback_used"] = (requested_model, fallback)
+                current_model = fallback
+                fallback_used = True
+            else:
+                raise
         except httpx.HTTPStatusError as e:
             if (
                 e.response.status_code == 429

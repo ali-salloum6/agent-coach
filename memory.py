@@ -14,7 +14,6 @@ from pathlib import Path
 
 import config
 import llm
-import memory_template
 import memory_writer
 
 log = logging.getLogger(__name__)
@@ -39,21 +38,6 @@ def load(agent_slug: str) -> str:
     entries never appear in the system prompt.
     """
     return memory_writer.load_combined_memory(agent_slug)
-
-
-def append(agent_slug: str, text: str) -> None:
-    """Manual `/remember` entry appended to the canonical `Manual Notes` section."""
-    memory_writer.ensure_files(agent_slug)
-    canonical_path = _canonical_path(agent_slug)
-    body = f"- [{config.format_local_time()}] {text.strip()}\n"
-    markdown = canonical_path.read_text(encoding="utf-8")
-    new_md = memory_template.append_under_heading(
-        markdown,
-        section="Manual Notes",
-        subsection=None,
-        body=body,
-    )
-    canonical_path.write_text(new_md, encoding="utf-8")
 
 
 async def extract_and_save(

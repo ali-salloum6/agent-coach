@@ -8,7 +8,7 @@ import logging
 import re
 import time
 from io import BytesIO
-from datetime import datetime, timedelta
+from datetime import datetime, time as dtime, timedelta
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -25,10 +25,14 @@ from telegram.request import HTTPXRequest
 from telegram.error import BadRequest, NetworkError, TelegramError, TimedOut
 
 import config
+import ledger
 import llm
 import memory
+import memory_v2
+import review
 import session_store
 import tts
+import writer_v2
 from agents.registry import get_agent
 
 MAX_TG_LEN = 4096
@@ -249,8 +253,10 @@ def _reset_session(model: str | None = None) -> None:
         log.exception("Pruning recent notes failed (non-fatal)")
     # Drop the previous on-disk conversation before building a fresh one.
     session_store.clear(AGENT.slug)
-    mem = memory.load(AGENT.slug)
-    system_prompt = AGENT.build_system_prompt(mem)
+    if memory_v2.enabled():
+        system_prompt = AGENT.build_system_prompt(memory_v2.stable_memory(AGENT.slug), v2=True)
+    else:
+        system_prompt = AGENT.build_system_prompt(memory.load(AGENT.slug))
     session["model"] = model or AGENT.default_model
     session["history"] = [{"role": "system", "content": system_prompt}]
     session["web_search"] = False
@@ -306,12 +312,12 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         "Commands:\n"
         "/new [model|cheap|mid|max] — start a fresh conversation (mid = gemini-3-flash; max = search on)\n"
         "/search on|off — toggle web search\n"
-        "/remember &lt;text&gt; — save a note to memory\n"
-        "/memory — show what I remember\n"
         "/model &lt;slug&gt; — switch LLM model\n"
         "/cheap — use 3.1 flash lite (cheaper)\n"
         "/openrouter_balance — check OpenRouter remaining credits\n"
-        "/read — read the last reply aloud (/read on|off for auto-read)\n\n"
+        "/read — read the last reply aloud (/read on|off for auto-read)\n"
+        + ("/review — run the weekly check-in now\n" if memory_v2.enabled() else "")
+        + "\n"
         "Send <b>photos</b>, image files or <b>PDFs</b> with optional captions; albums are "
         "grouped into one message for the model.\n\n"
         f"Current model: <code>{model}</code>",
@@ -371,35 +377,6 @@ async def cmd_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("Web search <b>disabled</b>.", parse_mode="HTML")
     else:
         await update.message.reply_text("Usage: /search on|off")
-
-
-async def cmd_remember(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _is_allowed_user(update):
-        return
-    text = " ".join(ctx.args) if ctx.args else ""
-    if not text:
-        await update.message.reply_text("Usage: /remember <something to remember>")
-        return
-    memory.append(AGENT.slug, text)
-    text_esc = html.escape(text)
-    await update.message.reply_text(f"Noted: <i>{text_esc}</i>", parse_mode="HTML")
-
-
-async def cmd_memory(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _is_allowed_user(update):
-        return
-    mem = memory.load(AGENT.slug)
-    if not mem.strip():
-        await update.message.reply_text("Memory is empty.")
-        return
-    # Telegram messages max out at 4096 chars — keep the end (most recent entries)
-    if len(mem) > 4000:
-        mem = "…(earlier memory omitted)\n\n" + mem[-4000:]
-    mem_html = _markdown_to_telegram_html(mem)
-    try:
-        await update.message.reply_text(mem_html, parse_mode="HTML")
-    except BadRequest:
-        await update.message.reply_text(mem)
 
 
 async def cmd_model(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -732,6 +709,11 @@ async def _conversation_reply(
     """Append user turn, call the model, send reply, schedule memory extraction."""
     chat_model = model or session["model"]
     session["history"].append({"role": "user", "content": user_content})
+    if memory_v2.enabled():
+        # The live block must include what the previous reply saved, and
+        # two memory steps must not work from the same stale food log.
+        await _wait_for_memory_writes(update)
+    request_messages = _request_messages(update, memory_user_text)
 
     await _safe_send_action(update)
 
@@ -756,7 +738,7 @@ async def _conversation_reply(
             can_stream_draft = await _send_draft(ctx, chat_id, draft_id, THINKING_DRAFT)
         try:
             async for kind, delta in llm.chat_stream(
-                messages=session["history"],
+                messages=request_messages,
                 model=chat_model,
                 web_search=web_search,
                 response_meta=response_meta,
@@ -801,11 +783,12 @@ async def _conversation_reply(
                     await update.message.reply_text(
                         "Temporary network issue while contacting the model provider. Retrying once."
                     )
+                response_meta.pop("fallback_used", None)
                 try:
                     for attempt in range(fallback_attempts):
                         try:
                             reply = await llm.chat(
-                                messages=session["history"],
+                                messages=request_messages,
                                 model=chat_model,
                                 web_search=web_search,
                                 response_meta=response_meta,
@@ -863,7 +846,7 @@ async def _conversation_reply(
     else:
         try:
             reply = await llm.chat(
-                messages=session["history"],
+                messages=request_messages,
                 model=chat_model,
                 web_search=web_search,
                 response_meta=response_meta,
@@ -882,7 +865,7 @@ async def _conversation_reply(
             try:
                 await asyncio.sleep(1.0)
                 reply = await llm.chat(
-                    messages=session["history"],
+                    messages=request_messages,
                     model=chat_model,
                     web_search=web_search,
                     response_meta=response_meta,
@@ -964,7 +947,11 @@ async def _conversation_reply(
             parse_mode="HTML",
         )
 
-    memory_task = asyncio.create_task(_background_extract(memory_user_text, reply, chat_model))
+    memory_task = asyncio.create_task(
+        _background_extract(
+            memory_user_text, reply, chat_model, has_attachment=isinstance(user_content, list)
+        )
+    )
     _memory_tasks.add(memory_task)
     memory_task.add_done_callback(_memory_tasks.discard)
 
@@ -1293,26 +1280,112 @@ async def _send_reply(update: Update, text: str) -> None:
         await _telegram_reply(update.message, chunk_html, parse_mode="HTML")
 
 
-async def _background_extract(user_text: str, assistant_reply: str, chat_model: str) -> None:
+async def _background_extract(
+    user_text: str, assistant_reply: str, chat_model: str, *, has_attachment: bool = False
+) -> None:
     try:
-        await memory.extract_and_save(
-            AGENT.slug, user_text, assistant_reply, chat_model=chat_model
-        )
+        if memory_v2.enabled():
+            await writer_v2.propose_and_apply(
+                AGENT.slug, user_text, assistant_reply,
+                writer_model=chat_model, has_attachment=has_attachment,
+            )
+        else:
+            await memory.extract_and_save(
+                AGENT.slug, user_text, assistant_reply, chat_model=chat_model
+            )
     except Exception:
         log.exception("Memory extraction failed (non-fatal)")
+
+
+def _request_messages(update: Update, memory_user_text: str) -> list[dict]:
+    """The messages sent to the model: the history, plus the live block in v2.
+
+    The live block goes only into this request, never into the saved
+    history, so it is always current and appears once.
+    """
+    if not memory_v2.enabled():
+        return session["history"]
+    try:
+        if update.effective_chat:
+            memory_v2.remember_chat(AGENT.slug, update.effective_chat.id)
+        live = memory_v2.live_context(AGENT.slug, memory_user_text)
+        return memory_v2.with_live_context(session["history"], live)
+    except Exception:
+        log.exception("Building the live memory block failed; sending without it")
+        return session["history"]
+
+
+async def _send_checkin(bot, chat_id: int) -> None:
+    """Run the weekly review and send its check-in to the user."""
+    result = review.run(AGENT.slug, today=ledger.today_iso())
+    text = result["text"]
+    try:
+        await bot.send_message(chat_id, _markdown_to_telegram_html(text), parse_mode="HTML")
+    except BadRequest:
+        await bot.send_message(chat_id, text)
+    session["history"].append({"role": "assistant", "content": text})
+    _persist_session()
+
+
+async def _weekly_review_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = memory_v2.chat_id(AGENT.slug)
+    if chat_id is None:
+        log.warning("Weekly review skipped: no chat id stored yet")
+        return
+    try:
+        await _send_checkin(context.bot, chat_id)
+        log.info("Weekly review sent")
+    except Exception:
+        log.exception("Weekly review failed")
+
+
+async def cmd_review(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_allowed_user(update):
+        return
+    if not memory_v2.enabled():
+        await update.message.reply_text("The weekly review needs memory v2.")
+        return
+    await _wait_for_memory_writes(update)
+    memory_v2.remember_chat(AGENT.slug, update.effective_chat.id)
+    await _send_checkin(ctx.bot, update.effective_chat.id)
+
+
+_WEEKDAYS = ("sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday")
+
+
+def _schedule_weekly_review(application) -> None:
+    if not memory_v2.enabled() or application.job_queue is None:
+        return
+    try:
+        hour, minute = (int(x) for x in config.WEEKLY_REVIEW_TIME.split(":"))
+        day = _WEEKDAYS.index(config.WEEKLY_REVIEW_DAY)
+        when = dtime(hour, minute, tzinfo=config.MEMORY_TIMEZONE)
+    except ValueError:
+        log.error(
+            "Weekly review not scheduled: WEEKLY_REVIEW_DAY=%r / WEEKLY_REVIEW_TIME=%r are invalid "
+            "(expected a weekday name such as monday and HH:MM)",
+            config.WEEKLY_REVIEW_DAY, config.WEEKLY_REVIEW_TIME,
+        )
+        return
+    # python-telegram-bot counts days from Sunday = 0.
+    application.job_queue.run_daily(_weekly_review_job, time=when, days=(day,), name="weekly_review")
+    log.info("Weekly review scheduled: %s %s", config.WEEKLY_REVIEW_DAY, config.WEEKLY_REVIEW_TIME)
+    if review.is_due(AGENT.slug, today=ledger.today_iso()):
+        application.job_queue.run_once(_weekly_review_job, when=60, name="weekly_review_catch_up")
+        log.info("Weekly review is due from a missed run; sending it in a minute")
 
 
 BOT_COMMANDS = [
     BotCommand("start", "See greeting and commands"),
     BotCommand("new", "Start fresh (cheap=cheap model, max=search on)"),
     BotCommand("search", "Toggle web search (on|off)"),
-    BotCommand("remember", "Save a note to memory"),
-    BotCommand("memory", "Show what I remember"),
     BotCommand("model", "Switch LLM model"),
     BotCommand("cheap", "Use 3.1 flash lite (cheaper)"),
     BotCommand("read", "Read the last reply aloud"),
     BotCommand("openrouter_balance", "Check OpenRouter remaining credits"),
 ]
+if memory_v2.enabled():
+    BOT_COMMANDS.append(BotCommand("review", "Run the weekly check-in now"))
 
 
 async def _set_commands(application) -> None:
@@ -1355,12 +1428,11 @@ def main() -> None:
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("new", cmd_new))
     app.add_handler(CommandHandler("search", cmd_search))
-    app.add_handler(CommandHandler("remember", cmd_remember))
-    app.add_handler(CommandHandler("memory", cmd_memory))
     app.add_handler(CommandHandler("model", cmd_model))
     app.add_handler(CommandHandler("cheap", cmd_cheap))
     app.add_handler(CommandHandler("read", cmd_read))
     app.add_handler(CommandHandler("openrouter_balance", cmd_openrouter_balance))
+    app.add_handler(CommandHandler("review", cmd_review))
     app.add_handler(
         MessageHandler(
             (filters.PHOTO | filters.Document.IMAGE | filters.Document.PDF)
@@ -1373,6 +1445,7 @@ def main() -> None:
     app.add_error_handler(_handle_app_error)
 
     app.post_init = _set_commands
+    _schedule_weekly_review(app)
 
     log.info("Bot starting with agent=%s model=%s", AGENT.name, AGENT.default_model)
     app.run_polling()

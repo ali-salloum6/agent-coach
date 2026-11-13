@@ -57,21 +57,21 @@ A Telegram bot that acts as a long-term AI assistant with persistent memory. Fir
 | `/start` | Welcome message and command list |
 | `/new [model\|cheap\|mid\|max]` | Start a fresh conversation; loads memory and clears the persisted session. Optional: `cheap` / `mid` / `max` (max = default model + web search on), or a full OpenRouter model slug |
 | `/search on\|off` | Turn web search on or off for this conversation |
-| `/remember <text>` | Manually add a note to memory |
-| `/memory` | Show what the bot remembers |
 | `/model <slug>` | Switch model: `mid` / `cheap` / `max`, or a full OpenRouter model slug |
 | `/cheap` | Shortcut to switch to the cheap model (gemini-3.1-flash-lite) |
 | `/read` | Read the last reply aloud; `/read on\|off` toggles auto-read (off by default) |
 | `/openrouter_balance` | Check usage and remaining limit for the current `OPENROUTER_API_KEY` |
+| `/review` | Memory v2 only: run the weekly check-in now |
 
 ## How memory works
+
+This section describes memory v1, the default. A bot with `MEMORY_VERSION=2` in its env file uses memory v2 instead: logs, cards, story and archive, described in [docs/memory-v2.md](docs/memory-v2.md).
 
 - **Auto (structured writer)**: After every reply, `memory_writer.propose_and_apply()` calls Gemini for JSON memory operations, validates each one (op type, source, retention, evidence quote, category, atomicity, plan-transience), and routes accepted operations to:
   - `## Time Series > <category>` in `data/<agent>.md` for measurements,
   - `## Current Snapshot`, `## Active Issues`, `## Plans, Advice, And Rationale`, `## Timeline` for durable items,
   - `data/<agent>.recent.md` for short-lived `add_recent_note` entries with a TTL of 2/7/14/30 days (default 2 for one-off details, 7 for short-term context). Same-day assistant plans referencing "today", "tonight", "this evening", "right now" are automatically downgraded from `long_term` to `recent` retention.
 - **Auto-expiration**: Expired recent notes are pruned **automatically** — on bot startup, on every `/new`, and whenever memory is loaded for the prompt. There is no manual review.
-- **Manual**: `/remember <text>` appends a timestamped note under `## Manual Notes`.
 - On `/new`, canonical memory plus non-expired recent notes are injected into the **system prompt** under "What you remember about the user". The previous chat session file (`data/<agent>.session.json`) is deleted and replaced.
 - **Session persistence**: The running conversation (history + model/search/tts flags) is saved to `data/<agent>.session.json` after each reply and restored on bot restart, so apt/OOM restarts no longer wipe the chat.
 - **Audit**: Every accepted/rejected operation is recorded in `data/<agent>.memory_ops.jsonl` for debugging.
