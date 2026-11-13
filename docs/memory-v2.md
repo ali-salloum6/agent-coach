@@ -170,7 +170,10 @@ Card limits: profile 5,000 characters, threads 4,000, playbook 7,000, story
   story growth, validation gaps, non-atomic writes, a sticky fallback note,
   scheduling crashes on bad settings, expired notes missing from search).
   All are fixed and covered by tests.
-- Stage 3 (switch the gym coach): not done; needs the user's go-ahead.
+- Stage 3 (switch the gym coach): done on 2026-11-13 (commit 7aa4f9a). The old
+  memory files stay on the server untouched, with a backup in
+  `data/archive/switch-<date>/`; removing `MEMORY_VERSION=2` from `.env.gym`
+  and restarting goes back to them. The life coach stays on memory v1.
 - Not built yet: changing phase (closing a chapter and opening the next,
   likely needed for the January review), and automatic condensing of the
   profile, threads and playbook cards.
