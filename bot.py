@@ -32,6 +32,7 @@ import memory_v2
 import phases
 import review
 import session_store
+import stt
 import tts
 import writer_v2
 from agents.registry import get_agent
@@ -320,7 +321,7 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         + ("/review — run the weekly check-in now\n" if memory_v2.enabled() else "")
         + "\n"
         "Send <b>photos</b>, image files or <b>PDFs</b> with optional captions; albums are "
-        "grouped into one message for the model.\n\n"
+        "grouped into one message for the model. <b>Voice messages</b> are transcribed.\n\n"
         f"Current model: <code>{model}</code>",
         parse_mode="HTML",
     )
@@ -1172,6 +1173,87 @@ async def handle_media(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     await _enqueue_album_item(key, item, update, ctx)
 
 
+MAX_HEARD_ECHO_CHARS = 1000
+
+
+async def handle_voice(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """Transcribe a voice note, audio file or round video, then answer it like text.
+
+    Every failure gets a reply saying what went wrong, so a voice message is
+    never silently dropped.
+    """
+    if not _is_allowed_user(update):
+        return
+    message = update.message
+    if not message:
+        return
+    media = message.voice or message.audio or message.video_note
+    if media is None:
+        return
+    duration = getattr(media, "duration", None) or 0
+    if duration > config.MAX_VOICE_SECONDS:
+        await message.reply_text(
+            f"That recording is {duration // 60} min long; I can transcribe up to "
+            f"{config.MAX_VOICE_SECONDS // 60} min. Send a shorter one or type it."
+        )
+        return
+    await _safe_send_action(update)
+    try:
+        audio = await _download_telegram_file(ctx.bot, media.file_id, max_bytes=config.MAX_VOICE_BYTES)
+    except ValueError as e:
+        await message.reply_text(f"That recording is too large to download: {e}")
+        return
+    except Exception:
+        log.exception("Downloading a voice message failed")
+        await message.reply_text("Couldn't download that voice message from Telegram. Send it again in a moment.")
+        return
+    try:
+        heard = await stt.transcribe(audio, timeout=config.VOICE_TIMEOUT_SECONDS)
+    except stt.NotAvailable as e:
+        log.error("Voice message not transcribed: %s", e)
+        await message.reply_text("Voice messages aren't working on the bot right now. Please type it for now.")
+        return
+    except asyncio.TimeoutError:
+        log.error("Transcribing a %ss voice message timed out", duration)
+        await message.reply_text("Transcribing that took too long. Send a shorter voice message or type it.")
+        return
+    except Exception:
+        log.exception("Transcribing a voice message failed")
+        await message.reply_text("Couldn't transcribe that voice message. Send it again or type it.")
+        return
+    text = heard.text.strip()
+    if not text:
+        await message.reply_text("I couldn't make out any speech in that voice message.")
+        return
+    log.info("Transcribed a %.0fs voice message (%s, %d chars)", heard.seconds, heard.language, len(text))
+    echo = text if len(text) <= MAX_HEARD_ECHO_CHARS else text[:MAX_HEARD_ECHO_CHARS].rstrip() + "…"
+    try:
+        await message.reply_text(f"🎙️ {echo}")
+    except TelegramError:
+        log.warning("Could not echo the transcript; answering anyway")
+    caption = (message.caption or "").strip()
+    user_text = f"(Voice message, transcribed) {text}" + (f"\nCaption: {caption}" if caption else "")
+    ts = config.format_local_time()
+    await _conversation_reply(
+        update,
+        ctx,
+        user_content=f"[Sent at {ts}]\n\n{user_text}",
+        memory_user_text=user_text,
+        stream=True,
+        web_search=session["web_search"],
+        allow_fallback=True,
+    )
+
+
+async def handle_unsupported(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """Answer message types the bot cannot read instead of ignoring them."""
+    if not _is_allowed_user(update) or not update.message:
+        return
+    await update.message.reply_text(
+        "I can't read that kind of message. Send text, photos, PDFs or voice messages."
+    )
+
+
 async def _telegram_reply(
     message,
     text: str,
@@ -1393,6 +1475,7 @@ if memory_v2.enabled():
 
 async def _set_commands(application) -> None:
     await application.bot.set_my_commands(BOT_COMMANDS)
+    application.create_task(stt.preload())
     try:
         pruned = memory.prune_recent(AGENT.slug)
         if pruned:
@@ -1444,6 +1527,11 @@ def main() -> None:
         )
     )
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(
+        MessageHandler((filters.VOICE | filters.AUDIO | filters.VIDEO_NOTE) & ~filters.COMMAND, handle_voice)
+    )
+    # Last in the group, so it only sees new messages no handler above took.
+    app.add_handler(MessageHandler(filters.UpdateType.MESSAGE & ~filters.COMMAND, handle_unsupported))
 
     app.add_error_handler(_handle_app_error)
 

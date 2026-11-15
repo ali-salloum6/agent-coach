@@ -1,0 +1,95 @@
+"""Speech to text for voice messages, run locally with faster-whisper.
+
+Voice notes are transcribed on the bot's own server, so the audio never
+leaves it. The model loads once (at startup, in the background) and stays in
+memory; transcriptions run one at a time in a worker thread so the bot keeps
+answering other updates meanwhile.
+
+Settings (env): VOICE_ENABLED (default on), WHISPER_MODEL (default "small";
+"medium" is more accurate and about twice as slow), WHISPER_LANGUAGE (unset
+means detect it), WHISPER_THREADS (default: all CPU cores).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+import threading
+from dataclasses import dataclass
+from io import BytesIO
+
+import config
+
+log = logging.getLogger(__name__)
+
+# Biases spelling towards how the coach writes numbers and units.
+INITIAL_PROMPT = (
+    "Gym coach chat about meals, calories, protein in grams, weight in kilos, "
+    "tape in centimeters, sets and reps, for example 125 grams, 76.9 kilos, 60 kilos for 8, 8 and 6."
+)
+
+
+class NotAvailable(RuntimeError):
+    """Transcription is switched off or faster-whisper is not installed."""
+
+
+@dataclass
+class Transcript:
+    text: str
+    language: str
+    seconds: float
+
+
+_model = None
+_load_lock = threading.Lock()
+_run_lock = threading.Lock()
+
+
+def _get_model():
+    global _model
+    if not config.VOICE_ENABLED:
+        raise NotAvailable("voice messages are switched off (VOICE_ENABLED)")
+    with _load_lock:
+        if _model is None:
+            try:
+                from faster_whisper import WhisperModel
+            except ImportError as e:
+                raise NotAvailable("faster-whisper is not installed") from e
+            threads = config.WHISPER_THREADS or os.cpu_count() or 1
+            log.info("Loading Whisper model %s (%d threads)", config.WHISPER_MODEL, threads)
+            _model = WhisperModel(config.WHISPER_MODEL, device="cpu", compute_type="int8", cpu_threads=threads)
+    return _model
+
+
+def transcribe_sync(audio: bytes) -> Transcript:
+    """Transcribe one audio file (any format ffmpeg reads, e.g. OGG/Opus)."""
+    model = _get_model()
+    with _run_lock:
+        segments, info = model.transcribe(
+            BytesIO(audio),
+            language=config.WHISPER_LANGUAGE,
+            beam_size=5,
+            vad_filter=True,
+            initial_prompt=INITIAL_PROMPT,
+        )
+        text = " ".join(segment.text.strip() for segment in segments).strip()
+    return Transcript(text=text, language=info.language, seconds=info.duration)
+
+
+async def transcribe(audio: bytes, *, timeout: float) -> Transcript:
+    """Transcribe in a worker thread. Raises asyncio.TimeoutError after `timeout` seconds."""
+    return await asyncio.wait_for(asyncio.to_thread(transcribe_sync, audio), timeout=timeout)
+
+
+async def preload() -> None:
+    """Load the model in the background at startup so the first voice note is quick."""
+    if not config.VOICE_ENABLED:
+        return
+    try:
+        await asyncio.to_thread(_get_model)
+        log.info("Whisper model %s ready", config.WHISPER_MODEL)
+    except NotAvailable as e:
+        log.warning("Voice messages unavailable: %s", e)
+    except Exception:
+        log.exception("Loading the Whisper model failed; voice messages will retry on first use")

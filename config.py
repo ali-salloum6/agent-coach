@@ -52,6 +52,14 @@ MEMORY_WRITER_MODE = (
 # reply's so the next reply does not wait long for it. Only models that take
 # an effort setting use it.
 MEMORY_WRITER_EFFORT = os.environ.get("MEMORY_WRITER_EFFORT", "low").strip().lower() or "low"
+# Voice messages: transcribed locally with faster-whisper (stt.py).
+VOICE_ENABLED = os.environ.get("VOICE_ENABLED", "1").strip().lower() not in ("0", "false", "no", "off")
+WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "small").strip() or "small"
+WHISPER_LANGUAGE = os.environ.get("WHISPER_LANGUAGE", "").strip() or None
+WHISPER_THREADS = int(os.environ.get("WHISPER_THREADS", "0") or 0)
+MAX_VOICE_SECONDS = int(os.environ.get("MAX_VOICE_SECONDS", "600"))
+MAX_VOICE_BYTES = 20 * 1024 * 1024  # Telegram bots can download at most 20 MB
+VOICE_TIMEOUT_SECONDS = float(os.environ.get("VOICE_TIMEOUT_SECONDS", "300"))
 # Which memory the bot uses. "1" is the single Markdown file per agent;
 # "2" is logs, cards, story and archive (docs/memory-v2.md). Set per bot in
 # its env file, so each agent can switch on its own.

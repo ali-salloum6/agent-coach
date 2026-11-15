@@ -63,6 +63,10 @@ A Telegram bot that acts as a long-term AI assistant with persistent memory. Fir
 | `/openrouter_balance` | Check usage and remaining limit for the current `OPENROUTER_API_KEY` |
 | `/review` | Memory v2 only: run the weekly check-in now |
 
+## Voice messages
+
+Voice notes, audio files and round videos are transcribed on the bot's own server with [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (`stt.py`), so the audio never leaves it. The bot shows what it heard, then answers it like a text message. `WHISPER_MODEL` picks the model (`small` by default). Any message type the bot cannot read gets a reply saying so.
+
 ## How memory works
 
 This section describes memory v1, the default. A bot with `MEMORY_VERSION=2` in its env file uses memory v2 instead: logs, cards, story and archive, described in [docs/memory-v2.md](docs/memory-v2.md).
