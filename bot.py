@@ -214,6 +214,7 @@ HISTORY_WARN_THRESHOLDS = (15, 20, 25, 30)
 # Memory writes still running after a reply. /new and /start wait for them so
 # the fresh conversation's memory snapshot includes the last exchange.
 _memory_tasks: set[asyncio.Task] = set()
+_background_tasks: set[asyncio.Task] = set()
 MEMORY_WRITE_WAIT_SECONDS = 90.0
 _draft_id_counter = itertools.count(start=int(time.time()))
 
@@ -1475,7 +1476,9 @@ if memory_v2.enabled():
 
 async def _set_commands(application) -> None:
     await application.bot.set_my_commands(BOT_COMMANDS)
-    application.create_task(stt.preload())
+    # A plain task: the application is not running yet in post_init.
+    _background_tasks.add(task := asyncio.get_running_loop().create_task(stt.preload()))
+    task.add_done_callback(_background_tasks.discard)
     try:
         pruned = memory.prune_recent(AGENT.slug)
         if pruned:

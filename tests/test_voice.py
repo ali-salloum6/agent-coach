@@ -91,10 +91,32 @@ class SttTests(unittest.TestCase):
         model = MagicMock()
         model.transcribe.return_value = (iter([SimpleNamespace(text=" Had rice."), SimpleNamespace(text=" And tea. ")]),
                                          SimpleNamespace(language="en", duration=5.0))
-        with patch.object(stt, "_get_model", return_value=model):
+        with patch.object(stt, "_get_model", return_value=model), patch.object(stt, "decode", return_value="samples"):
             heard = stt.transcribe_sync(b"ogg")
+        self.assertEqual(model.transcribe.call_args.args[0], "samples")
         self.assertEqual((heard.text, heard.language, heard.seconds), ("Had rice. And tea.", "en", 5.0))
         self.assertTrue(model.transcribe.call_args.kwargs["vad_filter"])
+
+    def test_decode_gives_16khz_mono_samples(self) -> None:
+        import av
+        import numpy as np
+        from io import BytesIO
+        buf = BytesIO()
+        with av.open(buf, "w", format="ogg") as out:
+            stream = out.add_stream("libopus", rate=48000)
+            stream.layout = "mono"
+            tone = (np.sin(np.arange(48000) * 2 * np.pi * 440 / 48000) * 8000).astype(np.int16).reshape(1, -1)
+            frame = av.AudioFrame.from_ndarray(tone, format="s16", layout="mono")
+            frame.sample_rate = 48000
+            for packet in stream.encode(frame):
+                out.mux(packet)
+            for packet in stream.encode(None):
+                out.mux(packet)
+        samples = stt.decode(buf.getvalue())
+        self.assertEqual(samples.dtype, np.float32)
+        self.assertAlmostEqual(len(samples) / stt.SAMPLE_RATE, 1.0, delta=0.1)
+        with self.assertRaises(Exception):
+            stt.decode(b"not audio")
 
     def test_switched_off(self) -> None:
         with patch.object(config, "VOICE_ENABLED", False), patch.object(stt, "_model", None):

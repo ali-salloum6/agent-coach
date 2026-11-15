@@ -7,7 +7,8 @@ answering other updates meanwhile.
 
 Settings (env): VOICE_ENABLED (default on), WHISPER_MODEL (default "small";
 "medium" is more accurate and about twice as slow), WHISPER_LANGUAGE (unset
-means detect it), WHISPER_THREADS (default: all CPU cores).
+means detect it), WHISPER_THREADS (default: all CPU cores), WHISPER_BEAM_SIZE
+(default 1, greedy; 5 is slower and occasionally more accurate).
 """
 
 from __future__ import annotations
@@ -62,14 +63,40 @@ def _get_model():
     return _model
 
 
+SAMPLE_RATE = 16000
+
+
+def decode(audio: bytes):
+    """Decode any audio file (e.g. OGG/Opus) to 16 kHz mono float32 samples.
+
+    Done here rather than inside faster-whisper, whose decoder passes an
+    option that PyAV 19 no longer accepts.
+    """
+    import av
+    import numpy as np
+
+    chunks = []
+    with av.open(BytesIO(audio), mode="r") as container:
+        if not container.streams.audio:
+            raise ValueError("the file has no audio")
+        resampler = av.AudioResampler(format="s16", layout="mono", rate=SAMPLE_RATE)
+        for frame in container.decode(container.streams.audio[0]):
+            chunks.extend(f.to_ndarray() for f in resampler.resample(frame))
+        chunks.extend(f.to_ndarray() for f in resampler.resample(None))
+    if not chunks:
+        return np.zeros(0, dtype=np.float32)
+    return np.concatenate(chunks, axis=1).reshape(-1).astype(np.float32) / 32768.0
+
+
 def transcribe_sync(audio: bytes) -> Transcript:
     """Transcribe one audio file (any format ffmpeg reads, e.g. OGG/Opus)."""
     model = _get_model()
+    samples = decode(audio)
     with _run_lock:
         segments, info = model.transcribe(
-            BytesIO(audio),
+            samples,
             language=config.WHISPER_LANGUAGE,
-            beam_size=5,
+            beam_size=config.WHISPER_BEAM_SIZE,
             vad_filter=True,
             initial_prompt=INITIAL_PROMPT,
         )

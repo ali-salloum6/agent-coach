@@ -57,6 +57,9 @@ VOICE_ENABLED = os.environ.get("VOICE_ENABLED", "1").strip().lower() not in ("0"
 WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "small").strip() or "small"
 WHISPER_LANGUAGE = os.environ.get("WHISPER_LANGUAGE", "").strip() or None
 WHISPER_THREADS = int(os.environ.get("WHISPER_THREADS", "0") or 0)
+# 1 is greedy decoding: about twice as fast as 5 on a 4-core server, with the
+# same transcript in tests; raise it if words come out wrong.
+WHISPER_BEAM_SIZE = int(os.environ.get("WHISPER_BEAM_SIZE", "1") or 1)
 MAX_VOICE_SECONDS = int(os.environ.get("MAX_VOICE_SECONDS", "600"))
 MAX_VOICE_BYTES = 20 * 1024 * 1024  # Telegram bots can download at most 20 MB
 VOICE_TIMEOUT_SECONDS = float(os.environ.get("VOICE_TIMEOUT_SECONDS", "300"))
