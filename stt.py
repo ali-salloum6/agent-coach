@@ -6,9 +6,11 @@ memory; transcriptions run one at a time in a worker thread so the bot keeps
 answering other updates meanwhile.
 
 Settings (env): VOICE_ENABLED (default on), WHISPER_MODEL (default "small";
-"medium" is more accurate and about twice as slow), WHISPER_LANGUAGE (unset
-means detect it), WHISPER_THREADS (default: all CPU cores), WHISPER_BEAM_SIZE
-(default 1, greedy; 5 is slower and occasionally more accurate).
+"large-v3-turbo" is more accurate on hard audio and about three times as
+slow), WHISPER_LANGUAGE (default "en"; "auto" detects it, but can take
+accented English for another language and garble the text), WHISPER_THREADS
+(default: all CPU cores), WHISPER_BEAM_SIZE (default 1, greedy; 5 is slower
+and occasionally more accurate).
 """
 
 from __future__ import annotations

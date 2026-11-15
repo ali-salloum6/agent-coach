@@ -65,7 +65,7 @@ A Telegram bot that acts as a long-term AI assistant with persistent memory. Fir
 
 ## Voice messages
 
-Voice notes, audio files and round videos are transcribed on the bot's own server with [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (`stt.py`), so the audio never leaves it. The bot shows what it heard, then answers it like a text message. `WHISPER_MODEL` picks the model (`small` by default). Any message type the bot cannot read gets a reply saying so.
+Voice notes, audio files and round videos are transcribed on the bot's own server with [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (`stt.py`), so the audio never leaves it. The bot shows what it heard, then answers it like a text message. `WHISPER_MODEL` picks the model (`small` by default). Speech is transcribed as English; set `WHISPER_LANGUAGE` to another language code, or to `auto` to detect it, though detection can mistake accented English for another language. Any message type the bot cannot read gets a reply saying so.
 
 ## How memory works
 

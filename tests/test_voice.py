@@ -96,6 +96,7 @@ class SttTests(unittest.TestCase):
         self.assertEqual(model.transcribe.call_args.args[0], "samples")
         self.assertEqual((heard.text, heard.language, heard.seconds), ("Had rice. And tea.", "en", 5.0))
         self.assertTrue(model.transcribe.call_args.kwargs["vad_filter"])
+        self.assertEqual(model.transcribe.call_args.kwargs["language"], "en")
 
     def test_decode_gives_16khz_mono_samples(self) -> None:
         import av

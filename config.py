@@ -55,7 +55,10 @@ MEMORY_WRITER_EFFORT = os.environ.get("MEMORY_WRITER_EFFORT", "low").strip().low
 # Voice messages: transcribed locally with faster-whisper (stt.py).
 VOICE_ENABLED = os.environ.get("VOICE_ENABLED", "1").strip().lower() not in ("0", "false", "no", "off")
 WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "small").strip() or "small"
-WHISPER_LANGUAGE = os.environ.get("WHISPER_LANGUAGE", "").strip() or None
+# Spoken language, English by default. "auto" detects it (multilingual models
+# only), but detection can take accented English for another language.
+_whisper_language = os.environ.get("WHISPER_LANGUAGE", "en").strip().lower() or "en"
+WHISPER_LANGUAGE = None if _whisper_language == "auto" else _whisper_language
 WHISPER_THREADS = int(os.environ.get("WHISPER_THREADS", "0") or 0)
 # 1 is greedy decoding: about twice as fast as 5 on a 4-core server, with the
 # same transcript in tests; raise it if words come out wrong.
