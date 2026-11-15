@@ -63,6 +63,10 @@ A Telegram bot that acts as a long-term AI assistant with persistent memory. Fir
 | `/openrouter_balance` | Check usage and remaining limit for the current `OPENROUTER_API_KEY` |
 | `/review` | Memory v2 only: run the weekly check-in now |
 
+## Photos and PDFs
+
+Photos, image files and PDFs are saved in `data/<agent>.attachments/` and stay in the conversation, so the model keeps seeing them on later messages until `/new` deletes them. Each request carries the newest files, at most `MAX_VISION_IMAGES` (10) and `MAX_VISION_PAYLOAD_BYTES` (20 MB); older ones are replaced by a note. A model that can't read images, such as some fallbacks, gets a note in place of each image.
+
 ## Voice messages
 
 Voice notes, audio files and round videos are transcribed on the bot's own server with [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (`stt.py`), so the audio never leaves it. The bot shows what it heard, then answers it like a text message. `WHISPER_MODEL` picks the model (`small` by default). Speech is transcribed as English; set `WHISPER_LANGUAGE` to another language code, or to `auto` to detect it, though detection can mistake accented English for another language. Any message type the bot cannot read gets a reply saying so.

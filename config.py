@@ -24,6 +24,7 @@ ALLOWED_USER_ID = int(_allowed_id) if _allowed_id else None
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_CREDITS_URL = "https://openrouter.ai/api/v1/credits"
 OPENROUTER_KEY_INFO_URL = "https://openrouter.ai/api/v1/key"
+OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 
 # Cap per response (reasoning tokens count toward it). xhigh reasoning on
 # GPT-6.1 Sol used ~6k reasoning tokens on a hard planning question, so leave
@@ -112,7 +113,9 @@ def format_local_time(dt: datetime | None = None, *, with_label: bool = True) ->
         return f"{base} {MEMORY_TIMEZONE_LABEL}"
     return base
 
-# Vision / Telegram media (per user turn)
+# Photos and PDFs. The counts and the payload cap apply to each batch the
+# user sends and to each request, which carries the newest files of the
+# conversation (attachments.py).
 MAX_VISION_IMAGES = int(os.environ.get("MAX_VISION_IMAGES", "10"))
 MAX_IMAGE_BYTES = int(os.environ.get("MAX_IMAGE_BYTES", str(5 * 1024 * 1024)))
 # Telegram bots can download at most 20 MB per file.

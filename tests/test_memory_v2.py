@@ -221,7 +221,7 @@ class BotWiringTests(V2TestCase):
     def test_v1_sends_the_history_unchanged(self) -> None:
         history = [{"role": "user", "content": "hi"}]
         with patch.object(config, "MEMORY_VERSION", "1"), patch.dict(bot.session, {"history": history}):
-            self.assertIs(bot._request_messages(SimpleNamespace(effective_chat=None), "hi"), history)
+            self.assertEqual(bot._request_messages(SimpleNamespace(effective_chat=None), "hi"), history)
 
     def test_memory_step_goes_to_the_v2_writer(self) -> None:
         with patch.object(bot.writer_v2, "propose_and_apply", AsyncMock()) as v2, \

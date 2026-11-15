@@ -16,6 +16,7 @@ os.environ.setdefault("TELEGRAM_BOT_TOKEN", "test-token")
 os.environ.setdefault("OPENROUTER_API_KEY", "test-key")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import attachments  # noqa: E402
 import bot  # noqa: E402
 import config  # noqa: E402
 import llm  # noqa: E402
@@ -183,7 +184,7 @@ class PdfAttachmentTests(unittest.TestCase):
         self.assertIsNone(bot._media_item_from_message(self._message("text/plain")))
 
     def test_pdf_part_is_openrouter_file(self) -> None:
-        part = bot._openrouter_pdf_part(b"%PDF-1.4", "labs.pdf")
+        part = attachments.pdf_part(b"%PDF-1.4", "labs.pdf")
         self.assertEqual(part["type"], "file")
         self.assertEqual(part["file"]["filename"], "labs.pdf")
         self.assertTrue(part["file"]["file_data"].startswith("data:application/pdf;base64,"))

@@ -58,12 +58,54 @@ def _reasoning_for_model(model: str) -> dict | None:
     return {"effort": effort} if effort else None
 
 
+# What each OpenRouter model reads (text, image, file, ...), loaded at startup
+# by load_model_inputs(). A model missing here is assumed to read images.
+_model_inputs: dict[str, frozenset[str]] = {}
+
+
+async def load_model_inputs() -> None:
+    """Learn which models read images, so text-only ones get a note instead."""
+    try:
+        async with _httpx_client(30) as client:
+            resp = await client.get(config.OPENROUTER_MODELS_URL)
+            resp.raise_for_status()
+            models = resp.json()["data"]
+        for m in models:
+            inputs = (m.get("architecture") or {}).get("input_modalities") or ()
+            _model_inputs[m["id"]] = frozenset(inputs)
+        log.info("Loaded the input types of %d OpenRouter models", len(models))
+    except Exception:
+        log.exception("Could not load what OpenRouter models read; assuming all read images")
+
+
+def reads_images(model: str) -> bool:
+    inputs = _model_inputs.get(model) or _model_inputs.get(model.split(":", 1)[0])
+    return not inputs or "image" in inputs
+
+
+def _without_images(messages: list[dict]) -> list[dict]:
+    """A copy of the messages with each image swapped for a note, for text-only models."""
+    note = {"type": "text", "text": "[An image was attached here, but this model cannot see images.]"}
+    out = []
+    for message in messages:
+        content = message.get("content")
+        if isinstance(content, list):
+            message = {**message, "content": [
+                note if isinstance(p, dict) and p.get("type") == "image_url" else p
+                for p in content
+            ]}
+        out.append(message)
+    return out
+
+
 def _build_request_body(
     messages: list[dict], model: str, web_search: bool, effort: str | None = None
 ) -> dict:
     body: dict = {
         "model": model,
-        "messages": messages,
+        # The history can hold earlier photos; a fallback or a model picked
+        # with /model may not read images.
+        "messages": messages if reads_images(model) else _without_images(messages),
         "max_tokens": config.MAX_OUTPUT_TOKENS,
         "provider": {"ignore": config.OPENROUTER_IGNORE_PROVIDERS},
     }

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import html
 import itertools
 import logging
@@ -24,6 +23,7 @@ from telegram.request import HTTPXRequest
 
 from telegram.error import BadRequest, NetworkError, TelegramError, TimedOut
 
+import attachments
 import config
 import ledger
 import llm
@@ -254,8 +254,10 @@ def _reset_session(model: str | None = None) -> None:
             log.info("Pruned %d expired recent notes on /new", pruned)
     except Exception:
         log.exception("Pruning recent notes failed (non-fatal)")
-    # Drop the previous on-disk conversation before building a fresh one.
+    # Drop the previous on-disk conversation, and its photos and PDFs, before
+    # building a fresh one.
     session_store.clear(AGENT.slug)
+    attachments.clear(AGENT.slug)
     if memory_v2.enabled():
         system_prompt = AGENT.build_system_prompt(memory_v2.stable_memory(AGENT.slug), v2=True)
     else:
@@ -322,7 +324,8 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         + ("/review — run the weekly check-in now\n" if memory_v2.enabled() else "")
         + "\n"
         "Send <b>photos</b>, image files or <b>PDFs</b> with optional captions; albums are "
-        "grouped into one message for the model. <b>Voice messages</b> are transcribed.\n\n"
+        "grouped into one message for the model, which keeps seeing them until /new. "
+        "<b>Voice messages</b> are transcribed.\n\n"
         f"Current model: <code>{model}</code>",
         parse_mode="HTML",
     )
@@ -651,25 +654,6 @@ async def _download_telegram_file(bot, file_id: str, *, max_bytes: int) -> bytes
     return data
 
 
-def _openrouter_image_part(raw: bytes, mime_type: str) -> dict:
-    b64 = base64.standard_b64encode(raw).decode("ascii")
-    return {
-        "type": "image_url",
-        "image_url": {"url": f"data:{mime_type};base64,{b64}"},
-    }
-
-
-def _openrouter_pdf_part(raw: bytes, filename: str) -> dict:
-    b64 = base64.standard_b64encode(raw).decode("ascii")
-    return {
-        "type": "file",
-        "file": {
-            "filename": filename,
-            "file_data": f"data:application/pdf;base64,{b64}",
-        },
-    }
-
-
 def _attachment_label(item: dict, index: int) -> str:
     if item.get("kind") == "pdf":
         return f"PDF {index} ({item.get('file_name') or 'document.pdf'})"
@@ -929,15 +913,6 @@ async def _conversation_reply(
     if not reply:
         reply = "(empty response)"
     session["history"].append({"role": "assistant", "content": reply})
-
-    if isinstance(user_content, list) and len(session["history"]) >= 2:
-        prev = session["history"][-2]
-        if prev.get("role") == "user" and prev.get("content") is user_content:
-            prev["content"] = (
-                memory_user_text
-                + "\n\n(Attachments were included; the model saw them for this reply only.)"
-            )
-
     _persist_session()
 
     await _send_reply(update, reply)
@@ -1065,10 +1040,11 @@ async def _handle_media_bundle(
     content_parts.append({"type": "text", "text": "\n".join(preamble_lines)})
 
     total_bytes = 0
+    downloads: list[tuple[str, bytes, str, str | None]] = []
     for idx, it in enumerate(items, start=1):
         file_id = it["file_id"]
         is_pdf = it.get("kind") == "pdf"
-        mime = it.get("mime_type") or "image/jpeg"
+        mime = "application/pdf" if is_pdf else it.get("mime_type") or "image/jpeg"
         label = _attachment_label(it, idx)
         max_bytes = config.MAX_PDF_BYTES if is_pdf else config.MAX_IMAGE_BYTES
         try:
@@ -1103,12 +1079,14 @@ async def _handle_media_bundle(
                 "Send fewer or smaller files."
             )
             return
-        if is_pdf:
-            content_parts.append(
-                _openrouter_pdf_part(raw, it.get("file_name") or "document.pdf")
-            )
-        else:
-            content_parts.append(_openrouter_image_part(raw, mime))
+        downloads.append((label, raw, mime, (it.get("file_name") or "document.pdf") if is_pdf else None))
+
+    # Saved only once every file passed the checks. The history keeps a
+    # reference, so the model keeps seeing the files until /new.
+    for label, raw, mime, file_name in downloads:
+        content_parts.append(
+            attachments.save(AGENT.slug, raw, label=label, mime_type=mime, file_name=file_name)
+        )
 
     await _conversation_reply(
         update,
@@ -1382,22 +1360,29 @@ async def _background_extract(
 
 
 def _request_messages(update: Update, memory_user_text: str) -> list[dict]:
-    """The messages sent to the model: the history, plus the live block in v2.
+    """The messages sent to the model: the history with its saved photos and
+    PDFs put back in, plus the live block in v2.
 
     The live block goes only into this request, never into the saved
     history, so it is always current and appears once.
     """
+    messages = attachments.expand(
+        AGENT.slug,
+        session["history"],
+        max_files=config.MAX_VISION_IMAGES,
+        max_bytes=config.MAX_VISION_PAYLOAD_BYTES,
+    )
     if not memory_v2.enabled():
-        return session["history"]
+        return messages
     try:
         if update.effective_chat:
             memory_v2.remember_chat(AGENT.slug, update.effective_chat.id)
         phases.apply_due(AGENT.slug, today=ledger.today_iso())
         live = memory_v2.live_context(AGENT.slug, memory_user_text)
-        return memory_v2.with_live_context(session["history"], live)
+        return memory_v2.with_live_context(messages, live)
     except Exception:
         log.exception("Building the live memory block failed; sending without it")
-        return session["history"]
+        return messages
 
 
 async def _send_checkin(bot, chat_id: int) -> None:
@@ -1477,8 +1462,9 @@ if memory_v2.enabled():
 async def _set_commands(application) -> None:
     await application.bot.set_my_commands(BOT_COMMANDS)
     # A plain task: the application is not running yet in post_init.
-    _background_tasks.add(task := asyncio.get_running_loop().create_task(stt.preload()))
-    task.add_done_callback(_background_tasks.discard)
+    for job in (stt.preload(), llm.load_model_inputs()):
+        _background_tasks.add(task := asyncio.get_running_loop().create_task(job))
+        task.add_done_callback(_background_tasks.discard)
     try:
         pruned = memory.prune_recent(AGENT.slug)
         if pruned:
